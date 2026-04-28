@@ -45,23 +45,25 @@ The project combined software and hardware work:
 
 ![Home screen](images/home_page.png)
 
+### 3D View
+
+![3D view](images/3d_view_page.png)
+
+### Feature Edit Options
+
+![Feature edit options](images/feature_edit_options.png)
+
 ### List View
 
 ![List view](images/list_view_page.png)
+
+### List View Multiple Rooms
 
 ![List view with multiple rooms](images/list_view_mutliple_rooms.png)
 
 ### Task Presets
 
 ![Task presets](images/task_presets.png)
-
-### Feature Edit Options
-
-![Feature edit options](images/feature_edit_options.png)
-
-### 3D View
-
-![3D view](images/3d_view_page.png)
 
 ### Household Settings
 
