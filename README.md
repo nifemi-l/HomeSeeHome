@@ -2,7 +2,7 @@
 
 Portfolio mirror of **Home See Home**, an EECS 582 team project focused on household task management across a traditional list interface and an interactive 3D view.
 
-This repository is meant to present the project clearly for review. The original development repo is here: `[nifemi-l/EECS-582-Project](https://github.com/nifemi-l/EECS-582-Project)`
+This repository is meant to present the project clearly for review. The original development repo is here: [nifemi-l/EECS-582-Project](https://github.com/nifemi-l/EECS-582-Project)
 
 ## Team
 
