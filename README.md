@@ -39,26 +39,27 @@ The project combined software and hardware work:
 
 ### Login
 
-Login screen
+[Login screen](images/login_page.png)
 
 ### Home
 
-Home screen
+[Home screen](images/home_page.png)
 
 ### List View
 
-List viewList view with multiple rooms
+[List view](images/list_view_page.png)  
+[List view with multiple rooms](images/list_view_mutliple_rooms.png)
 
 ### 3D View
 
-3D view
+[3D view](images/3d_view_page.png)
 
 ### Household Settings
 
-Household settings
+[Household settings](images/household_settings.png)
 
 ## Hardware
 
 The project also included a physical hardware build for the household display interface.
 
-Hardware device
+[Hardware device](images/hardware_image.png)
