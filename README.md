@@ -39,27 +39,36 @@ The project combined software and hardware work:
 
 ### Login
 
-[Login screen](images/login_page.png)
+![Login screen](images/login_page.png)
 
 ### Home
 
-[Home screen](images/home_page.png)
+![Home screen](images/home_page.png)
 
 ### List View
 
-[List view](images/list_view_page.png)  
-[List view with multiple rooms](images/list_view_mutliple_rooms.png)
+![List view](images/list_view_page.png)
+
+![List view with multiple rooms](images/list_view_mutliple_rooms.png)
+
+### Task Presets
+
+![Task presets](images/task_presets.png)
+
+### Feature Edit Options
+
+![Feature edit options](images/feature_edit_options.png)
 
 ### 3D View
 
-[3D view](images/3d_view_page.png)
+![3D view](images/3d_view_page.png)
 
 ### Household Settings
 
-[Household settings](images/household_settings.png)
+![Household settings](images/household_settings.png)
 
 ## Hardware
 
 The project also included a physical hardware build for the household display interface.
 
-[Hardware device](images/hardware_image.png)
+![Hardware device](images/hardware_image.png)
