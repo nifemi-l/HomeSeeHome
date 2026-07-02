@@ -144,6 +144,7 @@ export class Renderer {
   highlightedFeatureID: number | null; // which feature the user's mouse is hovering over
   currentViewingRoom: number; // which room of the household we're currently viewing
   roomList: HouseholdRoom[]; // the list of current rooms for the household
+  removalInProgress: boolean;
 
   // UI managed state variables
   selectedEditFeature: RenderableFeature | null; // The current feature being edited in the edit window
@@ -472,6 +473,7 @@ export class Renderer {
     this.roomList = [];
     this.selectedEditTask = null;
     this.selectedPlaceFeature = null;
+    this.removalInProgress = false;
 
     // Set callbacks
     this.syncUnplacedFeatures = () => {};
@@ -522,43 +524,43 @@ export class Renderer {
   checkReadyToDraw() {
     // Ensure initialization
     if (!this.initialized) {
-      console.error("Attempting to update view matrix before initialization.");
+      console.warn("Attempting to update view matrix before initialization.");
       return false;
     }
 
     // Ensure we have an OpenGL context, if not error and return
     if (!this.glRef) {
-      console.error("Frame drawn without a WebGL context");
+      console.warn("Frame drawn without a WebGL context");
       return false;
     }
 
     // Ensure we have a VAO Manager, if not error and return
     if (!this.vaoManager) {
-      console.error("Frame drawn without a VAO manager");
+      console.warn("Frame drawn without a VAO manager");
       return false;
     }
 
     // Ensure we have a valid shader program, if not error and return
     if (!this.shaderProgram) {
-      console.error("Frame drawn without a shader program");
+      console.warn("Frame drawn without a shader program");
       return false;
     }
 
     // Ensure we have a billboard shader program
     if (!this.bbShaderProgram) {
-      console.error("Frame drawn without a billboard shader program");
+      console.warn("Frame drawn without a billboard shader program");
       return false;
     }
 
     // Ensure we have valid uniform or attribute locations
     if (!this.attribLocs || !this.bbLocs || !this.lightUniformLocs || !this.matrixUniformLocs) {
-      console.error("Invalid shader uniform and/or attribute location data. ");
+      console.warn("Invalid shader uniform and/or attribute location data. ");
       return false;
     } 
 
     // Ensure we have a valid location for the matrix uniforms, if not error and return
     if (!this.matrixUniformLocs.modelMatrix || !this.matrixUniformLocs.projectionMatrix || !this.matrixUniformLocs.viewMatrix) {
-      console.error("Missing at least one matrix shader uniform location.");
+      console.warn("Missing at least one matrix shader uniform location.");
       return false;
     }
 
@@ -566,31 +568,31 @@ export class Renderer {
     if (!this.lightUniformLocs.material.ambient || !this.lightUniformLocs.material.diffuse || !this.lightUniformLocs.material.specular || !this.lightUniformLocs.material.shininess
           || !this.lightUniformLocs.light.ambient || !this.lightUniformLocs.light.diffuse || !this.lightUniformLocs.light.position || !this.lightUniformLocs.light.specular 
     ) {
-      console.error("Missing at least one light shader uniform location:", this.lightUniformLocs);
+      console.warn("Missing at least one light shader uniform location:", this.lightUniformLocs);
       return false;
     }
 
     // Ensure billboard uniform locations (we don't need to check pos since it cannot be null)
     if (!this.bbLocs.model || !this.bbLocs.view || !this.bbLocs.projection || !this.bbLocs.inverseView || !this.bbLocs.heightOffset || !this.bbLocs.healthPercent) {
-      console.error("Missing at lease one billboard uniform location.");
+      console.warn("Missing at lease one billboard uniform location.");
       return false;
     }
 
     // Ensure we have a proper house buffer, if not error and return
     if (!this.house.buffer) {
-      console.error("Invalid buffers.");
+      console.warn("Invalid buffers.");
       return false;
     }
 
     // Ensure we have a proper house billboard buffer, if not error and return
     if (!this.house.bbBuffer) {
-      console.error("Invalid billboard buffer.");
+      console.warn("Invalid billboard buffer.");
       return false;
     }
 
     // Ensure we have a proper house billboard vertex array object (VAO), if not error and return
     if (!this.house.bbVao) {
-      console.error("Invalid billboard VAO.");
+      console.warn("Invalid billboard VAO.");
       return false;
     }
 
@@ -599,34 +601,16 @@ export class Renderer {
   }
 
   // Update the world according to new input
-  updateViewMatrix(panVelocityX: number, panVelocityY: number, panYDir: number, delta: number) {
+  updateViewMatrix(panVelocityX: number, delta: number) {
     // Ensure initialization
     if (!this.initialized) {
       console.error("Attempting to update view matrix before initialization.");
       return;
     }
 
-    // Scale view matrix (thus scaling the world)
-    // Get the current scale
-    GLM.mat4.getScaling(this.scale, this.cam.viewMatrix);
-    // Make sure we have high enough velocity to zoom, so we don't annoyingly pan when want to zoom
-    if (Math.abs(panVelocityY) > 1.0) {
-      // scale according to y pan and y drag direction
-      // scale up = scaleAmt > 1
-      // scale down = scale amt < 1
-      const scaleAmt = panYDir < 0 ? 1 + panVelocityY * delta : 1 + panVelocityY * delta;
-
-      // Check if the proposed scale is valid (since we evenly scale, we only need to do this for the first component)
-      const testScale = scaleAmt * this.scale[0];
-      if (testScale > MIN_WORLD_SCALE && testScale < MAX_WORLD_SCALE) {
-        // we have a valid scale
-        GLM.mat4.scale(this.cam.viewMatrix, this.cam.viewMatrix, [scaleAmt, scaleAmt, scaleAmt]);
-      } 
-    }
-    
     // Apply pan-to-rotate
     GLM.mat4.rotateY(this.cam.viewMatrix, this.cam.viewMatrix, panVelocityX * delta); // Rotate the world according to the frame delta for smooth movement
-    
+
     // Update the shader's view matrix
     if (!this.glRef || !this.matrixUniformLocs || !this.matrixUniformLocs.viewMatrix || !this.pickLocs || !this.pickLocs.view) {
       console.error("Unable to set view matrix.");
@@ -638,6 +622,25 @@ export class Renderer {
       this.glRef.uniformMatrix4fv(this.matrixUniformLocs.viewMatrix, false, this.cam.viewMatrix as Float32Array); // Upload this new model matrix for drawing
     } else if (this.currentDrawPass === RenderPass.PICK_OBJECT) {
       this.glRef.uniformMatrix4fv(this.pickLocs.view, false, this.cam.viewMatrix as Float32Array); // Upload this new model matrix for drawing
+    }
+  }
+
+  // Apply an immediate multiplicative zoom to the world scale, clamped to the valid zoom
+  // range. scaleAmt > 1 zooms in, < 1 zooms out. Driven directly by pinch/wheel gesture
+  // deltas (rather than the per-frame velocity model used for pan-to-rotate) since those
+  // gestures already report discrete, already-smoothed deltas we want to track 1:1.
+  applyZoomScale(scaleAmt: number) {
+    if (!this.initialized) {
+      return;
+    }
+
+    // Get the current scale
+    GLM.mat4.getScaling(this.scale, this.cam.viewMatrix);
+
+    // Check if the proposed scale is valid (since we evenly scale, we only need to do this for the first component)
+    const testScale = scaleAmt * this.scale[0];
+    if (testScale > MIN_WORLD_SCALE && testScale < MAX_WORLD_SCALE) {
+      GLM.mat4.scale(this.cam.viewMatrix, this.cam.viewMatrix, [scaleAmt, scaleAmt, scaleAmt]);
     }
   }
 
@@ -890,10 +893,17 @@ export class Renderer {
   ///  Utilities  ///
   ///////////////////
 
-  // Just make sure we're using a valid room, set to the 1st in the room list index
+  // Make sure we're using a valid room. Keeps the last-viewed room (e.g. after navigating
+  // away to list view and back) if it's still valid, only falling back to the 1st room in
+  // the list if the previous room no longer exists (or on first load).
   setValidRoom(): number {
     if (this.roomList.length > 0) {
-      this.currentViewingRoom = this.roomList[0].room_id;
+      const stillValid =
+        this.currentViewingRoom === UNASSIGNED_ROOM_ID ||
+        this.roomList.some((r) => r.room_id === this.currentViewingRoom);
+      if (!stillValid) {
+        this.currentViewingRoom = this.roomList[0].room_id;
+      }
     } else {
       this.enableUnassignedRoom(); // enable the unassigned room if there are no rooms
       this.currentViewingRoom = UNASSIGNED_ROOM_ID;
@@ -1043,6 +1053,15 @@ export class Renderer {
       return;
     }
 
+    // Ensure we don't duplicate effort
+    if (this.removalInProgress) {
+      console.warn("Cannot remove while another removal is occurring.");
+      return;
+    }
+
+    // Store state for removal
+    this.removalInProgress = true;
+
     // Remove it's position data on the server
     apiClearFeaturePosition(featureID)
     .then(() => {
@@ -1053,6 +1072,40 @@ export class Renderer {
       this.syncUnplacedFeatures(this.unplacedFeatures); // trigger a sync in the React UI
     }).catch((e) => {
       console.error(`Failed to remove feature. Canceling removal for feature ${featureID} in household ${this.house.household_id}.`, e);
+    }).finally(() => {
+      this.removalInProgress = false;
+    });
+  }
+
+  // Permanently delete a placed feature (and its tasks) rather than just unplacing it.
+  // Unlike removeFeature, this does not add the feature back to the unplaced inventory.
+  deleteFeaturePermanently(featureID: number) {
+    // Find our feature
+    const feature = this.features.find((f) => { return f.id === featureID });
+    if (!feature) {
+      console.error("Unable to find feature for deletion.");
+      return;
+    }
+
+    // Ensure we don't duplicate effort (shares the flag with removeFeature since both
+    // mutate the same feature lists)
+    if (this.removalInProgress) {
+      console.warn("Cannot delete while another removal is occurring.");
+      return;
+    }
+
+    this.removalInProgress = true;
+
+    // Delete the feature (and its tasks, via DB cascade) on the server
+    apiDeleteFeature(featureID)
+    .then(() => {
+      // On success, apply the results in graphics. Otherwise, do nothing
+      this.house.renderableFeatures = this.house.renderableFeatures.filter((f) => { return f.id !== featureID });
+      this.features = this.features.filter((f) => { return f.id !== featureID });
+    }).catch((e) => {
+      console.error(`Failed to delete feature ${featureID} in household ${this.house.household_id}.`, e);
+    }).finally(() => {
+      this.removalInProgress = false;
     });
   }
 
@@ -1167,9 +1220,12 @@ export class Renderer {
     const dir = GLM.vec3.fromValues(back[0] - front[0], back[1] - front[1], back[2] - front[2]);
     GLM.vec3.normalize(dir, dir); // ensure nromalization
     if (Math.abs(dir[1]) <= 0.000001) { // check against a very small value to handle floating point error
-      console.error("Failing, unable to calculate a ray.")
+      // The camera is at too flat/grazing an angle for this click to ever cross the floor
+      // plane - not a bug, just means "this tap can't place anything," so warn (not error)
+      // to avoid popping the dev error overlay for an expected, harmless case.
+      console.warn("Unable to calculate a ray: click direction is parallel to the floor plane.")
       return null;
-    }  
+    }
 
     // Now, we need to check if the ray intersects any of the floor or wall features. Since these are known rectangles, this shouldn't be too bad.
     // We know that the floor and walls will be the first 4 features of the RenderableFeatures array.

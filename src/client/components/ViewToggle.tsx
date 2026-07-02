@@ -17,8 +17,9 @@ Invariants: None
 Known faults: None
 */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -30,6 +31,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { SensorBadge, SensorBadgeProps } from "./SensorBadge";
 import { clearToken, getToken } from "../utils/authStorage";
+import { getRandomMockSensorReading, MOCK_SENSOR_CYCLE_MS } from "../data/sensorData";
 import {
   brand,
   navy,
@@ -85,6 +87,8 @@ export default function ViewToggle({ active, onChange, householdId }: ViewToggle
   const [sensors, setSensors] = useState<SensorBadgeProps[]>(SENSORS_NA);
   const [hoverLogout, setHoverLogout] = useState(false);
   const [hoverBack, setHoverBack] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const lastMockSensorIndex = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,35 +106,24 @@ export default function ViewToggle({ active, onChange, householdId }: ViewToggle
     if (!householdId) return;
 
     let isMounted = true;
+    lastMockSensorIndex.current = null;
 
-    async function loadSensorData() {
-      try {
-        const response = await fetch(
-          `${process.env.EXPO_PUBLIC_API_URL}/api/sensor-data/${householdId}`
-        );
-        const data = await response.json();
+    function loadMockSensorData() {
+      const next = getRandomMockSensorReading(lastMockSensorIndex.current);
+      lastMockSensorIndex.current = next.index;
 
-        if (!isMounted) return;
-        if (!data || data.temperature === undefined) {
-          setSensors(SENSORS_NA);
-          return;
-        }
+      if (!isMounted) return;
 
-        const hum =
-          data.humidity !== undefined && data.humidity !== null
-            ? `${data.humidity}%`
-            : "N/A";
-        setSensors([
-          { icon: "thermometer", value: `${data.temperature}°C`, label: "Temperature" },
-          { icon: "water-percent", value: hum, label: "Humidity" },
-        ]);
-      } catch (_error) {
-        if (isMounted) setSensors(SENSORS_NA);
-      }
+      const humidity = next.reading.humidity !== null ? `${next.reading.humidity}%` : "N/A";
+
+      setSensors([
+        { icon: "thermometer", value: `${next.reading.temperature}°C`, label: "Temperature" },
+        { icon: "water-percent", value: humidity, label: "Humidity" },
+      ]);
     }
 
-    loadSensorData();
-    const interval = setInterval(loadSensorData, 60_000);
+    loadMockSensorData();
+    const interval = setInterval(loadMockSensorData, MOCK_SENSOR_CYCLE_MS);
     return () => {
       isMounted = false;
       clearInterval(interval);
@@ -238,9 +231,7 @@ export default function ViewToggle({ active, onChange, householdId }: ViewToggle
 
   const userCluster = (
     <Pressable
-      onPress={() => {
-        void handleLogout();
-      }}
+      onPress={() => setLogoutConfirmOpen(true)}
       accessibilityRole="button"
       accessibilityLabel="Log out"
       style={({ pressed }) => [
@@ -304,6 +295,34 @@ export default function ViewToggle({ active, onChange, householdId }: ViewToggle
           {userCluster}
         </View>
       )}
+
+      <Modal animationType="fade" transparent visible={logoutConfirmOpen} onRequestClose={() => setLogoutConfirmOpen(false)}>
+        <View style={styles.logoutModalBackdrop}>
+          <View style={styles.logoutModalCard}>
+            <View style={styles.logoutModalIconRow}>
+              <View style={styles.logoutModalIconCircle}>
+                <MaterialCommunityIcons name="logout" size={26} color="#D9534F" />
+              </View>
+            </View>
+            <Text style={styles.logoutModalTitle}>Log Out?</Text>
+            <Text style={styles.logoutModalSubtitle}>Are you sure you want to log out?</Text>
+            <View style={styles.logoutModalActions}>
+              <Pressable style={styles.logoutModalCancelButton} onPress={() => setLogoutConfirmOpen(false)}>
+                <Text style={styles.logoutModalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.logoutModalConfirmButton}
+                onPress={() => {
+                  setLogoutConfirmOpen(false);
+                  void handleLogout();
+                }}
+              >
+                <Text style={styles.logoutModalConfirmText}>Log Out</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -459,5 +478,77 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 14,
     fontWeight: "600",
+  },
+  logoutModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(27, 39, 56, 0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  logoutModalCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 22,
+    padding: 22,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 24,
+    elevation: 8,
+    alignSelf: "center",
+  },
+  logoutModalIconRow: {
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  logoutModalIconCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#FFF0F0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#1a2a3d",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  logoutModalSubtitle: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#5a6d82",
+    marginBottom: 18,
+    textAlign: "center",
+  },
+  logoutModalActions: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 12,
+    marginTop: 4,
+  },
+  logoutModalCancelButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "#EEF2F7",
+  },
+  logoutModalCancelText: {
+    color: "#64748B",
+    fontWeight: "600",
+  },
+  logoutModalConfirmButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "#D9534F",
+  },
+  logoutModalConfirmText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
   },
 });

@@ -125,7 +125,7 @@ Create a table for cleanable features
 CREATE TABLE IF NOT EXISTS Feature (
     /* Positive id for features as the primary key */
     feature_id SERIAL PRIMARY KEY CHECK (feature_id > 0),
-    /* Household id should link the feature to a specific household 
+    /* Household id should link the feature to a specific household
         Is cascade needed here?
     */
     household_id INTEGER REFERENCES Household(household_id) ON DELETE CASCADE,
@@ -133,10 +133,11 @@ CREATE TABLE IF NOT EXISTS Feature (
     feature_name VARCHAR(50) NOT NULL,
     feature_type VARCHAR(50),
     /* Do I have x, y, and z as separate or one position with all 3?
-        Make floats */
-    x_pos FLOAT NOT NULL,
-    y_pos FLOAT NOT NULL,
-    z_pos FLOAT NOT NULL,
+        Make floats. NULL means the feature has not been placed in the
+        3D view yet (list view items start unplaced until dragged in). */
+    x_pos FLOAT,
+    y_pos FLOAT,
+    z_pos FLOAT,
     /* MaterialCommunityIcons name shown in the list view for this feature/room
         Defaults to the generic home icon if not specified */
     icon VARCHAR(50) DEFAULT 'home-outline',

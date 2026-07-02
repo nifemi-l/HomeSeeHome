@@ -41,8 +41,8 @@ import { ExpoWebGLRenderingContext, GLView } from 'expo-gl';
 import { ActivityIndicator, LayoutChangeEvent, Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Text } from '@react-navigation/elements';
-import { Button, PaperProvider, Card, Menu, TextInput } from 'react-native-paper';
+import { Text } from "expo-router/react-navigation";
+import { Button, PaperProvider, Card, Menu, TextInput, Dialog, Portal } from 'react-native-paper';
 import { useLocalSearchParams } from "expo-router";
 import { appPaperLightTheme } from "../../../theme/paperTheme";
 import { listBrand } from "../../../theme/colors";
@@ -72,10 +72,12 @@ import Task from "../../../data/task";
 // See https://docs.swmansion.com/react-native-gesture-handler/docs/gestures/use-pan-gesture for gesture handler details
 // Also define global variables to store this data and update each frame
 let panVelocityX = 0;
-let panLastX = 0 
-let panVelocityY = 0;
-let panLastY = 0; 
-let panYDir = 0;
+let panLastX = 0
+
+// Pinch-to-zoom tracking. pinchLastScale holds the cumulative pinch scale (relative to
+// gesture start) as of the last onUpdate, so we can derive the incremental scale change
+// to apply since then.
+let pinchLastScale = 1;
 
 // store screen dimensios. Window is the entire window, view is the view component that wraps the GL context
 let viewWidth = 0;
@@ -166,9 +168,8 @@ function clearSelectedPlaceFeature() {
 // ***********************************************************
 
 // A helper function to update the velocity of the pan. We multiply the delta by a constant speed value
-function updateVelocityPan(dx: number, dy: number) {
+function updateVelocityPan(dx: number) {
   panVelocityX = dx * 0.5;
-  panVelocityY = dy * 0.5;
 }
 
 // Set width and height of view on layout change
@@ -190,14 +191,15 @@ function getViewAndWindowDims() {
 // variables since the function pointers wont change. 
 
 // Define gesture handler function for panning and rotating the model
+// Constrained to a single finger/pointer so a 2-finger pinch is never also interpreted as a pan.
 const handlePan = Gesture.Pan()
   .runOnJS(true) // Run all gesture handling on the main JS thread. Note: for performance reasons we could change this so it runs on the UI thread in the future
-  
+  .minPointers(1)
+  .maxPointers(1)
+
   // Reset values on the start of a gesture
   .onStart(() => {
     panLastX = 0;
-    panLastY = 0;
-    panYDir = 0;
     setXAxisAngle();
   })
 
@@ -206,20 +208,30 @@ const handlePan = Gesture.Pan()
     const deltaX = event.translationX - panLastX;
     panLastX = event.translationX;
 
-    const deltaY = event.translationY - panLastY;
-    panLastY = event.translationY;
-
-    // store the direction of our y movement
-    panYDir = deltaY > 0 ? 1 : -1;
-
-    updateVelocityPan(deltaX, deltaY);
+    updateVelocityPan(deltaX);
     setXAxisAngle();
   })
 
   // When we let go of the drag, we no longer want to rotate so we set the rotation value to 0
   .onEnd(() => {
-    updateVelocityPan(0, 0);
-    panYDir = 0;
+    updateVelocityPan(0);
+  });
+
+// Natural two-finger pinch-to-zoom. event.scale is cumulative relative to gesture start,
+// so we derive the incremental change since the last update and apply it immediately —
+// this tracks finger distance 1:1 rather than relying on a velocity/frame-delta model.
+const handlePinch = Gesture.Pinch()
+  .runOnJS(true)
+  .onStart(() => {
+    pinchLastScale = 1;
+  })
+  .onUpdate((event) => {
+    const incrementalScale = event.scale / pinchLastScale;
+    pinchLastScale = event.scale;
+    rdr.applyZoomScale(incrementalScale);
+  })
+  .onEnd(() => {
+    pinchLastScale = 1;
   });
 
 // ***********************************************************
@@ -327,6 +339,7 @@ function EditWindow(props: EditMenuProps) {
   const [newFrequency, setNewFrequency] = useState("");
   // The angle between the camera and the x axis
   const xAxisAngle = useSyncExternalStore(subListener, getXAxisAngle); // will be updated externally to react, triggers a re-render on change
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Ensure sync between the renderer's selected task and the UI's selected task
   useEffect(() => {
@@ -510,10 +523,65 @@ function EditWindow(props: EditMenuProps) {
                   <Button onPress={() => {selectedFeature.tasks[selectedChore].finishTask();}}>Mark complete!</Button>
                 </Card.Actions>
             ) : null}
+            {/* Two distinct, deliberate actions - separated from the controls above so
+                neither is ever an accidental tap:
+                  - Send to dock: quick, reversible, for repositioning. No confirmation
+                    needed since nothing is lost. Just waits in the dock to be placed again.
+                  - Delete feature: permanent (removes the feature and its tasks), so it
+                    requires confirmation first. */}
+            <Card.Actions>
+              <Button
+                mode="outlined"
+                textColor={listBrand}
+                onPress={() => {
+                  rdr.removeFeature(selectedFeature.id);
+                  setSelectedEditFeature(null);
+                }}
+              >
+                <MaterialCommunityIcons name="tray-arrow-down" size={18} color={listBrand} />
+                {"  Send to dock"}
+              </Button>
+              <Button
+                mode="outlined"
+                textColor="#D9534F"
+                onPress={() => setShowDeleteConfirm(true)}
+              >
+                <MaterialCommunityIcons name="trash-can-outline" size={18} color="#D9534F" />
+                {"  Delete feature"}
+              </Button>
+            </Card.Actions>
           </Card>
         ) : isEditing && !selectedFeature ? (
           <Text style={{color: "red"}}>Select a feature to edit</Text>
         ) : null }
+
+        <Portal>
+          <Dialog visible={showDeleteConfirm} onDismiss={() => setShowDeleteConfirm(false)}>
+            <Dialog.Title>Delete feature?</Dialog.Title>
+            <Dialog.Content>
+              <Text>
+                {selectedFeature ? `"${selectedFeature.name}"` : "This feature"} and all of its tasks will be permanently deleted. This cannot be undone.
+              </Text>
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button mode="text" onPress={() => setShowDeleteConfirm(false)}>Cancel</Button>
+              <Button
+                mode="contained"
+                buttonColor="#D9534F"
+                textColor="#FFFFFF"
+                onPress={() => {
+                  if (selectedFeature) {
+                    rdr.deleteFeaturePermanently(selectedFeature.id);
+                  }
+                  setShowDeleteConfirm(false);
+                  setSelectedEditFeature(null);
+                }}
+              >
+                Delete
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
+        </Portal>
     </View>
   );
 }
@@ -568,9 +636,26 @@ function AuthenticatedGraphicsScreen() {
     // Register the mouse move listner
     window.addEventListener('mousemove', handleMouseMove);
 
+    // Trackpad pinch gestures are reported by the browser as wheel events with ctrlKey
+    // set (this is how Chrome/Firefox/Safari distinguish a pinch from a regular 2-finger
+    // scroll), so this gives us "natural" pinch-to-zoom on web without touch hardware.
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) {
+        return;
+      }
+      event.preventDefault(); // stop the browser from also zooming the page
+      const clampedDeltaY = Math.max(-50, Math.min(50, event.deltaY));
+      const scaleAmt = 1 - clampedDeltaY * 0.01;
+      rdrRef.current.applyZoomScale(scaleAmt);
+    }
+
+    // Must be non-passive so preventDefault() above actually takes effect
+    window.addEventListener('wheel', handleWheel, { passive: false });
+
     return () => {
       // Destructor
       window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('wheel', handleWheel);
     }
   }, [])
 
@@ -614,23 +699,32 @@ function AuthenticatedGraphicsScreen() {
         }
       } else {
         // If we're not editing (placing features),
-        //    1. Check if we're highlighting a feature. If so, delete it and we're done.
-        //    2. If we're not highlighting a feature, check if our line intersects any of the walls or the floor. 
-        //    3. If we found a valid point, place a feature at that point. If not, we're done. 
+        //    1. Check if we're highlighting a feature. If so, select it and jump into Edit
+        //       mode so its info panel opens - clicking a feature should let you edit it,
+        //       not silently delete it. Removal now lives as an explicit button in that panel.
+        //    2. If we're not highlighting a feature, check if our line intersects any of the walls or the floor.
+        //    3. If we found a valid point, place a feature at that point. If not, we're done.
         if (!highlightedObjectID) {
           // 2: We're not highlighting a feature, check if the line intersects the walls or the floor
           const dims = getViewAndWindowDims();
           const point = rdrRef.current.screenToWorldCoords(event.absoluteX, event.absoluteY, dims[0], dims[1], dims[2], dims[3]);
-          // 3: If we've found a valid point, place a feature at that point. Otherwise, do nothing. 
+          // 3: If we've found a valid point, place a feature at that point. Otherwise, do nothing.
           if (!point) {
             return; // do nothing if we have not found a valid point
           } else {
-            // If we did find a valid point, add the feature. 
+            // If we did find a valid point, add the feature.
             rdrRef.current.placeSelectedFeature(point[0], point[1], point[2]);
           }
         } else {
-          // 1: We are highlighting a feature, so we just delete it.
-          rdrRef.current.removeFeature(highlightedObjectID);
+          // 1: We clicked an existing feature - open its edit panel instead of removing it.
+          setXAxisAngle();
+          for (const f of rdrRef.current.house.renderableFeatures) {
+            if (f.id === highlightedObjectID) {
+              setSelectedEditFeature(f);
+              break;
+            }
+          }
+          setCurrentTool(Tool.TOOL_EDIT_FEATURE);
           rdrRef.current.setHighlightedFeature(-1); // -1 effectively sets to null
         }
       }
@@ -638,7 +732,9 @@ function AuthenticatedGraphicsScreen() {
   });
 
   // Use a composed gesture to allow for both pan and tap gestures. It is exclusive in that we can't use them both
-  const composedGesture = Gesture.Exclusive(handlePan, handleTap);
+  // Pinch runs simultaneously alongside pan/tap (they're constrained to 1 pointer, pinch needs 2)
+  // so a user can rotate/tap and pinch-zoom independently without one blocking the other.
+  const composedGesture = Gesture.Simultaneous(Gesture.Exclusive(handlePan, handleTap), handlePinch);
 
   ///////////////////////////
   ///  Index and similar  ///
@@ -900,9 +996,12 @@ async function onContextCreate(gl: ExpoWebGLRenderingContext) {
 
 // Draw a frame including all wrapper routines
 function drawFrame(time: number) {
-    // Ensure we're ready to draw
-    if (!rdr.checkReadyToDraw() || !rdr.glRef || !rdr.vaoManager) {
-      console.error("Draw not ready.");
+    // Ensure we're ready to draw. GL setup can still be finishing on the first frame or two
+    // after context creation, so retry next frame instead of permanently killing the loop
+    // (checkReadyToDraw already warns with the specific reason it's not ready). The glRef
+    // check is also needed here so TypeScript narrows it to non-null below.
+    if (!rdr.checkReadyToDraw() || !rdr.glRef) {
+      rdr.frameId = window.requestAnimationFrame(drawFrame);
       return;
     }
 
@@ -942,8 +1041,8 @@ function renderScene(delta: number) {
   // Prepare draw by clearing the screen and depth buffer
   rdr.glRef.clear(rdr.glRef.COLOR_BUFFER_BIT | rdr.glRef.DEPTH_BUFFER_BIT);
 
-  // Update rotation & zoom
-  rdr.updateViewMatrix(panVelocityX, panVelocityY, panYDir, delta);
+  // Update rotation (zoom is applied immediately by pinch/wheel handlers, not per-frame)
+  rdr.updateViewMatrix(panVelocityX, delta);
 
   // Update wall visibility according to angle
   rdr.setWallVisibility();

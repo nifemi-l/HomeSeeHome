@@ -48,9 +48,9 @@ def create_feature():
             household_id,
             data["feature_name"],
             data.get("feature_type", ""),
-            data.get("x_pos", None),
-            data.get("y_pos", None),
-            data.get("z_pos", None),
+            data.get("x_pos"),
+            data.get("y_pos"),
+            data.get("z_pos"),
             data.get("icon", "home-outline"),
             room_id,
         )
@@ -123,7 +123,7 @@ def remove_feature(feature_id):
 
 # Fetch all features (with their tasks nested inside) for a given household
 # This is the main endpoint the list view hits when it loads
-# Example response: [{ "feature_id": 1, "household_id": 1, "feature_name": "Kitchen", "feature_type": "room", "x_pos": 0, "y_pos": 0, "z_pos": 0, "icon": "home-outline", "tasks": [{ "task_id": 1, "feature_id": 1, "task_name": "Clean the kitchen", "frequency_days": 7, "last_completed": null, "visibility": "household", "created_by_account_id": 1, "icon": "clipboard-text-outline" }, ...] }, ...]
+# Example response: [{ "feature_id": 1, "household_id": 1, "feature_name": "Kitchen", "feature_type": "room", "x_pos": null, "y_pos": null, "z_pos": null, "icon": "home-outline", "tasks": [{ "task_id": 1, "feature_id": 1, "task_name": "Clean the kitchen", "frequency_days": 7, "last_completed": null, "visibility": "household", "created_by_account_id": 1, "icon": "clipboard-text-outline" }, ...] }, ...]
 @routes_bp.route("/household/<int:household_id>/features", methods=["GET"])
 def get_household_features_route(household_id):
     account_id, error = get_current_account_id()
@@ -351,6 +351,7 @@ def remove_user(account_id):
         return jsonify({"error": str(e)}), 400
 
 # --- Sensor Data Route for querying household sensor data ---
+# DEPRECATED: kept for legacy clients while the Expo toolbar uses local mock readings.
 @routes_bp.route("/sensor-data/<int:household_id>", methods=["GET"])
 def get_sensor_data(household_id):
     try:

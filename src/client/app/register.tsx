@@ -15,13 +15,22 @@ Invariants: None
 Known faults: None
 */
 
-import { View, Text, TextInput, Pressable, StyleSheet, Alert, Image, Platform, useWindowDimensions } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, Alert, Image, Platform } from "react-native";
 import { router } from "expo-router";
 import { useRef, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { saveToken } from "../utils/authStorage";
-import { navy } from "../theme/colors";
+import { AuthLoadingScreen, useGuestGuard } from "../utils/useAuthGuard";
+import { useResponsiveWidth } from "../utils/useResponsiveWidth";
+import {
+  heroGradient,
+  navy,
+  navLogoutHover,
+  navLogoutWebShell,
+  navLogoutWebShellCompact,
+  navLogoutWebShellHover,
+} from "../theme/colors";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -29,7 +38,18 @@ const BRAND_BLUE = "#3B6DB5";
 const BUTTON_GRADIENT = ["#3B6DB5", "#5B8AD4"] as const;
 const BUTTON_GRADIENT_HOVER = ["#2F5494", "#4A7ABF"] as const;
 
+// Redirect already-authenticated users straight to /home instead of showing the signup form
 export default function RegisterScreen() {
+  const { isCheckingGuest } = useGuestGuard();
+
+  if (isCheckingGuest) {
+    return <AuthLoadingScreen />;
+  }
+
+  return <RegisterForm />;
+}
+
+function RegisterForm() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password1, setPassword1] = useState("");
@@ -37,6 +57,7 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [hoverCreateAccount, setHoverCreateAccount] = useState(false);
+  const [hoverUserGuide, setHoverUserGuide] = useState(false);
   const [showPassword1, setShowPassword1] = useState(false);
   const [showPassword2, setShowPassword2] = useState(false);
   const [isUsernameFocused, setIsUsernameFocused] = useState(false);
@@ -47,10 +68,13 @@ export default function RegisterScreen() {
   const emailRef = useRef<TextInput>(null);
   const password1Ref = useRef<TextInput>(null);
   const password2Ref = useRef<TextInput>(null);
-  const { width: windowWidth } = useWindowDimensions();
+  const windowWidth = useResponsiveWidth();
 
   const isWide = windowWidth > 860;
   const isCompact = windowWidth < 480;
+
+  const logoIconSize = isCompact ? 22 : 28;
+  const navHomeIconSize = isCompact ? 17 : 20;
 
   async function handleRegister() {
     setErrorMessage("");
@@ -281,15 +305,52 @@ export default function RegisterScreen() {
   );
 
   return (
-    <View style={styles.screen}>
-      <View style={[styles.navbar, isCompact && styles.navbarCompact]}>
-        <View style={styles.navLeft}>
-          <View style={styles.logoBox}>
-            <MaterialCommunityIcons name="home" size={isCompact ? 18 : 22} color="#FFFFFF" />
+      <View style={styles.screen}>
+        {/* Navbar */}
+        <View style={[styles.navbar, isCompact && styles.navbarCompact]}>
+          <View style={styles.navLeft}>
+            <View style={[styles.logoBox, isCompact && styles.logoBoxCompact]}>
+              <MaterialCommunityIcons name="home" size={logoIconSize} color="#FFFFFF" />
+            </View>
+            <Text style={[styles.navBrand, isCompact && styles.navBrandCompact, { cursor: "pointer" }]} onPress={() => router.push("/home")}>
+              HomeSeeHome
+            </Text>
           </View>
-          <Text style={[styles.navBrand, isCompact && styles.navBrandCompact]}>HomeSeeHome</Text>
+          <View style={[styles.navRight, isCompact && styles.navRightCompact]}>
+            <Pressable
+              style={[
+                styles.navLink,
+                isCompact && styles.navLinkCompact,
+                Platform.OS === "web" && navLogoutWebShell,
+                Platform.OS === "web" && isCompact && navLogoutWebShellCompact,
+                Platform.OS === "web" && hoverUserGuide && navLogoutWebShellHover,
+              ]}
+              onPress={() => router.push("/userguide")}
+              accessibilityRole="link"
+              accessibilityLabel="Open the user guide"
+              // @ts-ignore web-only pointer hover
+              onMouseEnter={() => Platform.OS === "web" && setHoverUserGuide(true)}
+              // @ts-ignore web-only pointer hover
+              onMouseLeave={() => Platform.OS === "web" && setHoverUserGuide(false)}
+            >
+              <MaterialCommunityIcons
+                name="book-open-outline"
+                size={navHomeIconSize}
+                color={Platform.OS === "web" && hoverUserGuide ? navLogoutHover.label : "#FFFFFF"}
+              />
+              <Text
+                style={[
+                  styles.navBrand,
+                  isCompact && styles.navBrandCompact,
+                  { fontSize: 15, fontWeight: "500" },
+                  Platform.OS === "web" && hoverUserGuide && { color: navLogoutHover.label },
+                ]}
+              >
+                User Guide
+              </Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
 
       {isWide ? (
         <View style={styles.fullBgContainer}>
@@ -375,24 +436,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   navLeft: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
   },
   logoBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 10,
-  },
-  navBrand: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-  },
+      width: 40,
+      height: 40,
+      borderRadius: 10,
+      backgroundColor: heroGradient[0],
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: 8,
+      flexShrink: 0,
+      shadowColor: "#1A2B4D",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+  navBrand: { color: "#FFFFFF", fontSize: 18, fontWeight: "700", letterSpacing: 0.3, flexShrink: 1 },
   navBrandCompact: {
     fontSize: 17,
   },
@@ -630,4 +694,21 @@ const styles = StyleSheet.create({
     color: "#445988",
     fontWeight: "700",
   },
+  navRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  navRightCompact: {
+    gap: 12,
+  },
+  navLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  navLinkCompact: {
+    gap: 4,
+  },
+  logoBoxCompact: { width: 32, height: 32, borderRadius: 8, marginRight: 6 },
 });
