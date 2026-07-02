@@ -37,6 +37,7 @@ Known faults: None
 
 // Prevents URL changing to bypass login.
 import { AuthLoadingScreen, useAuthGuard } from "../../../utils/useAuthGuard";
+import { useResponsiveWidth } from "../../../utils/useResponsiveWidth";
 // Import react hooks we need for state, lifecycle, and performance
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // Import RN components for building the UI
@@ -160,6 +161,11 @@ function TaskRow({
   const [hoverCheck, hoverCheckHandlers] = useWebHover();
   const [hoverDone, hoverDoneHandlers] = useWebHover();
   const [hoverDel, hoverDelHandlers] = useWebHover();
+  // Below this width the row's fixed-size controls (checkbox, icon, two action
+  // buttons) leave too little room for the name/health-bar/due-text column,
+  // so it wraps awkwardly. Shrink the controls and drop the due-text label
+  // prefix to give that column more breathing room.
+  const isCompact = useResponsiveWidth() < 420;
 
   return (
     <View
@@ -176,6 +182,7 @@ function TaskRow({
         hitSlop={8}
         style={({ pressed }) => [
           styles.checkbox,
+          isCompact && styles.checkboxCompact,
           Platform.OS === "web" && hoverCheck && styles.taskRowControlHover,
           pressed && styles.taskRowControlPressed,
         ]}
@@ -189,27 +196,27 @@ function TaskRow({
         >
           <MaterialCommunityIcons
             name={isSelected ? "checkbox-marked" : "checkbox-blank-outline"}
-            size={22}
+            size={isCompact ? 19 : 22}
             color={isSelected ? listBrand : "#ccc"}
           />
         </View>
       </Pressable>
 
-      <View style={styles.taskIconWrap}>
+      <View style={[styles.taskIconWrap, isCompact && styles.taskIconWrapCompact]}>
         <MaterialCommunityIcons
           name={task.icon as any}
-          size={20}
+          size={isCompact ? 16 : 20}
           color={listBrand}
         />
       </View>
 
       <View style={styles.taskInfo}>
         <Text style={styles.taskName} numberOfLines={1}>
-          {task.name}  
+          {task.name}
         </Text>
         <HealthBar task={task} />
         <Text style={styles.taskDueText}>
-          Time Until Due:{" "}
+          {!isCompact && "Time Until Due: "}
           <Text style={[styles.taskDueText, { color: healthColor(task.healthPercent) }]}>
             {duePhrase}
           </Text>
@@ -222,6 +229,7 @@ function TaskRow({
         hitSlop={8}
         style={({ pressed }) => [
           styles.completeBtn,
+          isCompact && styles.taskRowBtnCompact,
           Platform.OS === "web" && hoverDone && styles.taskRowControlHover,
           pressed && styles.taskRowControlPressed,
         ]}
@@ -235,7 +243,7 @@ function TaskRow({
         >
           <MaterialCommunityIcons
             name="check-circle-outline"
-            size={20}
+            size={isCompact ? 18 : 20}
             color={Platform.OS === "web" && hoverDone ? "#2e7d32" : "#4caf50"}
           />
         </View>
@@ -246,6 +254,7 @@ function TaskRow({
         hitSlop={8}
         style={({ pressed }) => [
           styles.taskDeleteBtn,
+          isCompact && styles.taskRowBtnCompact,
           Platform.OS === "web" && hoverDel && styles.taskRowControlHover,
           pressed && styles.taskRowControlPressed,
         ]}
@@ -259,7 +268,7 @@ function TaskRow({
         >
           <MaterialCommunityIcons
             name="close-circle-outline"
-            size={20}
+            size={isCompact ? 18 : 20}
             color={Platform.OS === "web" && hoverDel ? "#e57373" : "#ccc"}
           />
         </View>
@@ -2144,6 +2153,9 @@ const styles = StyleSheet.create({
     checkbox: {
         marginRight: 6,
     },
+    checkboxCompact: {
+        marginRight: 2,
+    },
     taskIconWrap: {
         width: 32,
         height: 32,
@@ -2152,6 +2164,12 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         marginRight: 10,
+    },
+    taskIconWrapCompact: {
+        width: 24,
+        height: 24,
+        borderRadius: 6,
+        marginRight: 6,
     },
     taskInfo: {
         flex: 1,
@@ -2177,6 +2195,10 @@ const styles = StyleSheet.create({
     taskDeleteBtn: {
         padding: 6,
         marginLeft: 4,
+    },
+    taskRowBtnCompact: {
+        padding: 3,
+        marginLeft: 0,
     },
     healthBarRow: {
         flexDirection: "row",

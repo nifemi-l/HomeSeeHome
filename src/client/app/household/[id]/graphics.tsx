@@ -340,6 +340,12 @@ function EditWindow(props: EditMenuProps) {
   // The angle between the camera and the x axis
   const xAxisAngle = useSyncExternalStore(subListener, getXAxisAngle); // will be updated externally to react, triggers a re-render on change
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // The panel is absolutely positioned at left:20 with content-sized (not screen-sized)
+  // width, so on narrow screens it needs an explicit cap or it overflows the viewport.
+  // No artificial upper bound here - on wide screens windowWidth - 40 is larger than the
+  // panel's natural content width, so this only actually constrains anything on mobile.
+  const { width: windowWidth } = useWindowDimensions();
+  const panelMaxWidth = windowWidth - 40;
 
   // Ensure sync between the renderer's selected task and the UI's selected task
   useEffect(() => {
@@ -365,7 +371,7 @@ function EditWindow(props: EditMenuProps) {
   }, [selectedFeature])
 
   return (
-    <View 
+    <View
       style={{
           flexDirection: "column",
           alignItems: "baseline",
@@ -373,6 +379,7 @@ function EditWindow(props: EditMenuProps) {
           position: "absolute",
           top: 10,
           left: 20,
+          maxWidth: panelMaxWidth,
           padding: 10,
           zIndex: 11,
           gap: 10,
@@ -529,7 +536,7 @@ function EditWindow(props: EditMenuProps) {
                     needed since nothing is lost. Just waits in the dock to be placed again.
                   - Delete feature: permanent (removes the feature and its tasks), so it
                     requires confirmation first. */}
-            <Card.Actions>
+            <Card.Actions style={{ flexWrap: "wrap" }}>
               <Button
                 mode="outlined"
                 textColor={listBrand}

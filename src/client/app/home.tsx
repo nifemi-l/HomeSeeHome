@@ -884,6 +884,8 @@ function AuthenticatedHomeScreen() {
           <View style={styles.navBrandWrap}>
             <Text
               style={[styles.navBrand, isCompact && styles.navBrandCompact, { cursor: "pointer" }]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
               onPress={() => router.push("/home")}
             >
               HomeSeeHome
@@ -912,15 +914,16 @@ function AuthenticatedHomeScreen() {
               size={navHomeIconSize}
               color={Platform.OS === "web" && hoverUserGuide ? navLogoutHover.label : "#FFFFFF"}
             />
-            <Text
-              style={[
-                styles.navLinkText,
-                isNavCompact && styles.navLinkTextCompact,
-                Platform.OS === "web" && hoverUserGuide && { color: navLogoutHover.label },
-              ]}
-            >
-              User Guide
-            </Text>
+            {!isNavCompact && (
+              <Text
+                style={[
+                  styles.navLinkText,
+                  Platform.OS === "web" && hoverUserGuide && { color: navLogoutHover.label },
+                ]}
+              >
+                User Guide
+              </Text>
+            )}
           </Pressable>
           <Pressable
             style={[
@@ -931,6 +934,8 @@ function AuthenticatedHomeScreen() {
               Platform.OS === "web" && hoverLogout && styles.navLogoutWebShellHover,
             ]}
             onPress={() => setLogoutConfirmOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Log out"
             // @ts-ignore web-only pointer hover
             onMouseEnter={() => Platform.OS === "web" && setHoverLogout(true)}
             // @ts-ignore web-only pointer hover
@@ -939,15 +944,16 @@ function AuthenticatedHomeScreen() {
             <View style={[styles.avatarCircle, isNavCompact && styles.avatarCircleCompact]}>
               <Text style={[styles.avatarText, isNavCompact && styles.avatarTextCompact]}>{avatarLetter}</Text>
             </View>
-            <Text
-              style={[
-                styles.navLinkText,
-                isNavCompact && styles.navLinkTextCompact,
-                Platform.OS === "web" && hoverLogout && { color: navLogoutHover.label },
-              ]}
-            >
-              Logout
-            </Text>
+            {!isNavCompact && (
+              <Text
+                style={[
+                  styles.navLinkText,
+                  Platform.OS === "web" && hoverLogout && { color: navLogoutHover.label },
+                ]}
+              >
+                Logout
+              </Text>
+            )}
           </Pressable>
         </View>
       </View>
