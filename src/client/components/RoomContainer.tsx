@@ -200,25 +200,25 @@ export function RoomContainer({
 
   return (
     <View style={styles.wrap}>
-      <Pressable
-        onPress={() => {
-          if (editOpen) return;
-          setCollapsed((p) => !p);
-        }}
-        style={({ pressed }) => [
-          styles.header,
-          { backgroundColor: resolvedBg },
-          styles.headerRel,
-          Platform.OS === "web" && styles.headerWeb,
-          pressed && styles.headerPressed,
-        ]}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: !collapsed }}
-        // @ts-ignore web-only pointer hover
-        onMouseEnter={() => Platform.OS === "web" && setHoverHeader(true)}
-        // @ts-ignore web-only pointer hover
-        onMouseLeave={() => Platform.OS === "web" && setHoverHeader(false)}
-      >
+      <View style={[styles.header, { backgroundColor: resolvedBg }]}> 
+        <Pressable
+          onPress={() => {
+            if (editOpen) return;
+            setCollapsed((p) => !p);
+          }}
+          style={({ pressed }) => [
+            styles.headerMain,
+            styles.headerRel,
+            Platform.OS === "web" && styles.headerWeb,
+            pressed && styles.headerPressed,
+          ]}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: !collapsed }}
+          // @ts-ignore web-only pointer hover
+          onMouseEnter={() => Platform.OS === "web" && setHoverHeader(true)}
+          // @ts-ignore web-only pointer hover
+          onMouseLeave={() => Platform.OS === "web" && setHoverHeader(false)}
+        >
         {Platform.OS === "web" && hoverHeader && (
           <View
             pointerEvents="none"
@@ -245,7 +245,14 @@ export function RoomContainer({
         <Text style={[styles.count, { color: metaColor }, styles.headerForeground]} numberOfLines={1}>
           {countLabel}
         </Text>
-        {showPencil && (
+        <MaterialCommunityIcons
+          name={collapsed ? "chevron-down" : "chevron-up"}
+          size={16}
+          color={metaColor}
+          style={styles.headerForeground}
+        />
+      </Pressable>
+      {showPencil && (
           <Pressable
             onPress={(e: any) => togglePencil(e)}
             accessibilityRole="button"
@@ -312,13 +319,7 @@ export function RoomContainer({
             </View>
           </Pressable>
         )}
-        <MaterialCommunityIcons
-          name={collapsed ? "chevron-down" : "chevron-up"}
-          size={16}
-          color={metaColor}
-          style={styles.headerForeground}
-        />
-      </Pressable>
+      </View>
 
       {!collapsed && <View style={[styles.body, { backgroundColor: bodyTint }]}>{children}</View>}
 
@@ -422,6 +423,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 10,
     paddingHorizontal: 13,
+    gap: 9,
+  },
+  headerMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 9,
   },
   headerRel: {

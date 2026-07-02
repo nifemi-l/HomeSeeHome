@@ -108,6 +108,54 @@ export function useAuthGuard() {
   return { isCheckingAuth, isAuthenticated };
 }
 
+// Check whether the user already has a valid saved auth token and, if so,
+// redirect them away from guest-only screens (login/register) to /home.
+export function useGuestGuard() {
+
+  // Get the router instance for redirecting already-authenticated users
+  const router = useRouter();
+
+  // Track whether the authentication check is still in progress
+  const [isCheckingGuest, setIsCheckingGuest] = useState(true);
+
+  // Run the authentication check when this hook is first used
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+
+        // Get the saved auth token from storage
+        const token = await getToken();
+
+        // No token at all - this is a real guest, let the screen render
+        if (!token) {
+          setIsCheckingGuest(false);
+          return;
+        }
+
+        // Token exists but is stale - clear it and let the screen render
+        if (isTokenExpired(token)) {
+          await clearToken();
+          setIsCheckingGuest(false);
+          return;
+        }
+
+        // A valid session already exists, so this guest-only screen
+        // shouldn't be reachable - send them to their dashboard instead
+        router.replace("/home");
+      } catch {
+        // Treat any storage or parsing failure as a real guest
+        setIsCheckingGuest(false);
+      }
+    }
+
+    // Start checking the user's authentication status
+    checkAuth();
+  }, [router]);
+
+  // Return the current authentication check state to the screen
+  return { isCheckingGuest };
+}
+
 // Show a loading screen while authentication is being checked
 export function AuthLoadingScreen() {
   return (

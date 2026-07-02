@@ -554,12 +554,15 @@ function AuthenticatedHomeScreen() {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   // Web-only hover for navbar logout and illustration CTAs (color only)
   const [hoverLogout, setHoverLogout] = useState(false);
+  const [hoverUserGuide, setHoverUserGuide] = useState(false);
   const [hoverCreateHousehold, setHoverCreateHousehold] = useState(false);
   const [hoverJoinCode, setHoverJoinCode] = useState(false);
   // UI state: which household card's menu is open
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   // UI state: which household is pending leave confirmation
   const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
+  // UI state: whether the "are you sure you want to log out" modal is open
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   // UI state: which admin household triggered the "cannot leave" info modal
   const [cannotLeaveId, setCannotLeaveId] = useState<string | null>(null);
   // UI state: which household's member list is being viewed
@@ -868,6 +871,7 @@ function AuthenticatedHomeScreen() {
 
   const logoIconSize = isNavCompact ? 22 : 28;
   const navHomeIconSize = isNavCompact ? 17 : 20;
+  const isCompact = windowWidth < 480;
 
   return (
     <View style={styles.screen}>
@@ -879,23 +883,45 @@ function AuthenticatedHomeScreen() {
           </View>
           <View style={styles.navBrandWrap}>
             <Text
-              style={[styles.navBrand, isNavCompact && styles.navBrandCompact]}
-              numberOfLines={1}
-              ellipsizeMode="tail"
+              style={[styles.navBrand, isCompact && styles.navBrandCompact, { cursor: "pointer" }]}
+              onPress={() => router.push("/home")}
             >
               HomeSeeHome
             </Text>
           </View>
         </View>
         <View style={[styles.navRight, isNavCompact && styles.navRightCompact]}>
-          <View
-            style={[styles.navLink, isNavCompact && styles.navLinkCompact]}
-            accessible={false}
-            importantForAccessibility="no-hide-descendants"
+          <Pressable
+            style={[
+              styles.navLink,
+              isNavCompact && styles.navLinkCompact,
+              Platform.OS === "web" && navLogoutWebShell,
+              Platform.OS === "web" && isNavCompact && navLogoutWebShellCompact,
+              Platform.OS === "web" && hoverUserGuide && navLogoutWebShellHover,
+            ]}
+            onPress={() => router.push("/userguide")}
+            accessibilityRole="link"
+            accessibilityLabel="Open the user guide"
+            // @ts-ignore web-only pointer hover
+            onMouseEnter={() => Platform.OS === "web" && setHoverUserGuide(true)}
+            // @ts-ignore web-only pointer hover
+            onMouseLeave={() => Platform.OS === "web" && setHoverUserGuide(false)}
           >
-            <MaterialCommunityIcons name="home" size={navHomeIconSize} color="#FFFFFF" />
-            <Text style={[styles.navLinkText, isNavCompact && styles.navLinkTextCompact]}>Home</Text>
-          </View>
+            <MaterialCommunityIcons
+              name="book-open-outline"
+              size={navHomeIconSize}
+              color={Platform.OS === "web" && hoverUserGuide ? navLogoutHover.label : "#FFFFFF"}
+            />
+            <Text
+              style={[
+                styles.navLinkText,
+                isNavCompact && styles.navLinkTextCompact,
+                Platform.OS === "web" && hoverUserGuide && { color: navLogoutHover.label },
+              ]}
+            >
+              User Guide
+            </Text>
+          </Pressable>
           <Pressable
             style={[
               styles.navLogout,
@@ -904,7 +930,7 @@ function AuthenticatedHomeScreen() {
               Platform.OS === "web" && isNavCompact && styles.navLogoutWebShellCompact,
               Platform.OS === "web" && hoverLogout && styles.navLogoutWebShellHover,
             ]}
-            onPress={handleLogout}
+            onPress={() => setLogoutConfirmOpen(true)}
             // @ts-ignore web-only pointer hover
             onMouseEnter={() => Platform.OS === "web" && setHoverLogout(true)}
             // @ts-ignore web-only pointer hover
@@ -925,6 +951,7 @@ function AuthenticatedHomeScreen() {
           </Pressable>
         </View>
       </View>
+
 
       {/* --- Hero Banner with curved bottom --- */}
       <View>
@@ -1622,14 +1649,52 @@ function AuthenticatedHomeScreen() {
           </Modal>
         );
       })()}
+
+      {/* Log out confirmation modal */}
+      <Modal animationType="fade" transparent visible={logoutConfirmOpen} onRequestClose={() => setLogoutConfirmOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.leaveModalIconRow}>
+              <View style={styles.leaveModalIconCircle}>
+                <MaterialCommunityIcons name="logout" size={26} color="#D9534F" />
+              </View>
+            </View>
+            <Text style={styles.modalTitle}>Log Out?</Text>
+            <Text style={styles.modalSubtitle}>Are you sure you want to log out?</Text>
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelButton} onPress={() => setLogoutConfirmOpen(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.leaveConfirmButton}
+                onPress={() => {
+                  setLogoutConfirmOpen(false);
+                  void handleLogout();
+                }}
+              >
+                <Text style={styles.leaveConfirmButtonText}>Log Out</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: pageBg },
-  navbar: { height: 68, backgroundColor: navy, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20 },
-  navbarCompact: { height: 56, paddingHorizontal: 12 },
+  navbar: {
+    height: 68,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 24,
+    backgroundColor: navy,
+  },
+    navbarCompact: {
+    height: 56,
+    paddingHorizontal: 16,
+  },
   navLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center" },
   logoBox: {
     width: 40,
@@ -1649,7 +1714,9 @@ const styles = StyleSheet.create({
   logoBoxCompact: { width: 32, height: 32, borderRadius: 8, marginRight: 6 },
   navBrandWrap: { flex: 1, minWidth: 0 },
   navBrand: { color: "#FFFFFF", fontSize: 18, fontWeight: "700", letterSpacing: 0.3, flexShrink: 1 },
-  navBrandCompact: { fontSize: 14 },
+  navBrandCompact: {
+    fontSize: 17,
+  },
   navRight: { flexDirection: "row", alignItems: "center", gap: 20, flexShrink: 0 },
   navRightCompact: { gap: 8 },
   navLink: { flexDirection: "row", alignItems: "center", gap: 5 },
