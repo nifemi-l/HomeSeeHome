@@ -49,6 +49,7 @@ export default function Root({ children }: PropsWithChildren) {
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
+        <link rel="icon" type="image/png" href={require("../assets/images/icons8-home-filled-outline-32.png")} />
         <style id="expo-root-scroll-stable" dangerouslySetInnerHTML={{ __html: ROOT_SCROLL_CSS }} />
       </head>
       <body>{children}</body>
