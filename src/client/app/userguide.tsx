@@ -158,14 +158,18 @@ export default function UserGuide() {
         </View>
         <Text
           style={[styles.navBrand, isCompact && styles.navBrandCompact, { cursor: "pointer" }]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
           onPress={() => router.push("/home")}
         >
           HomeSeeHome
         </Text>
         <View style={styles.navSpacer} />
-        <Text style={[styles.navBrand, styles.navBrandActive, isCompact && styles.navBrandCompact]}>
-          User Guide
-        </Text>
+        {!isCompact && (
+          <Text style={[styles.navBrand, styles.navBrandActive, isCompact && styles.navBrandCompact]}>
+            User Guide
+          </Text>
+        )}
       </View>
 
       <ScrollView
