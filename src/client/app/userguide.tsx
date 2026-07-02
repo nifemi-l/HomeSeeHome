@@ -461,7 +461,11 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   featureTextStacked: {
-    flex: 0,
+    // featureText sets `flex: 3`, which is flex-grow:3 + flex-shrink:1 + flex-basis:0%.
+    // Overriding flexGrow alone leaves flex-basis at 0%, still collapsing this item to
+    // 0 height in the column layout - flexBasis must be reset back to content-sized too.
+    flexGrow: 0,
+    flexBasis: "auto",
   },
   paragraph: {
     fontSize: 15,
@@ -496,7 +500,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   featureVideoWrapStacked: {
-    flex: 0,
+    // See featureTextStacked - featureVideoWrap's `flex: 2` also needs flexBasis reset.
+    flexGrow: 0,
+    flexBasis: "auto",
     marginTop: 16,
   },
   featureVideo: {
