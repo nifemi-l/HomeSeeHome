@@ -20,8 +20,11 @@ Revision date:
   - 4/16/26: Add 3D scale, rotation database support
   - 4/18/26: Highlight selected task and health bar
   - 4/20/26: Add inventory bar to manage adding features to the graphical view
-  - 7/6/26: Compact themed delete/interval dialogs, transform controls behind a
-            "Move & resize" toggle, and a hover name tag for features under the cursor
+  - 7/6/26: Edit panel buttons wrap to their natural width instead of being squeezed into
+            equal-width columns, so labels never truncate (long labels stack onto their own
+            row on narrow screens instead). Tasks section redesigned with a status dot,
+            due-in count colored via the real healthPercent(), and a selected-task checkmark.
+            Hover name tag for features under the cursor.
 Preconditions: A React application asking for the home page
 Postconditions: A home page component ready for rendering
 Errors: The home page will always be delivered successfully. 
@@ -50,7 +53,7 @@ import { Text } from "expo-router/react-navigation";
 import { Button, PaperProvider, Card, TextInput, Dialog, Portal } from 'react-native-paper';
 import { useLocalSearchParams } from "expo-router";
 import { appPaperLightTheme } from "../../../theme/paperTheme";
-import { listBrand } from "../../../theme/colors";
+import { listBrand, listSelection } from "../../../theme/colors";
 import tinycolor from "tinycolor2";
 
 // Import graphics utilities
@@ -59,6 +62,9 @@ import {
   RenderPass,getPixelFromRaw, getPickedObjectFromPointOnScreen,
   setPixelFrustrum, InventoryProps, EditMenuProps
 } from "../../../data/graphicsUtils"
+
+// Import due-date and health helpers
+import { daysUntilNextDue, healthColor, healthPercent } from "../../../data/householdUtils";
 
 // Import renderer classes
 import {
@@ -437,8 +443,10 @@ function EditWindow(props: EditMenuProps) {
   const selectedFeature = useSyncExternalStore(subListener, getSelectedEditFeature); // will be updated by GL, triggers a re-render on change
   // Set the chore selected for our feature
   const [selectedChore, setSelectedChore] = useState(0);
-  // Whether the move/rotate/scale controls are expanded (collapsed by default to keep the panel small)
+  // Expansion state for the three panel sections
   const [showTransform, setShowTransform] = useState(false);
+  const [showActions, setShowActions] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
   // Store: Are we changing the interval yet?
   const [showIntervalMenu, setShowIntervalMenu] = useState(false);
   // The frequency update value we want to store for updates
@@ -472,9 +480,11 @@ function EditWindow(props: EditMenuProps) {
 
   // When selectedFeature changes, we want to update selectedChore as rdr.selectedEditTask may have changed
   useEffect(() => {
-    // Just reset to a clean state
+    // Reset to a clean state when feature selection changes
     setSelectedChore(0);
     setShowTransform(false);
+    setShowActions(false);
+    setShowTasks(false);
   }, [selectedFeature])
 
   return (
@@ -562,10 +572,15 @@ function EditWindow(props: EditMenuProps) {
         {isEditing && selectedFeature !== null ? (
           <Card
             mode='contained'
+            style={{ maxWidth: panelMaxWidth }}
           >
-            <Card.Title title={selectedFeature.feature_name}/>
-            {/* Transform controls live behind a toggle so the panel stays small by default */}
-            <Card.Actions>
+            <Card.Title title={selectedFeature.feature_name} style={{ paddingBottom: 8 }} />
+
+            {/* Three toggle buttons for the main sections. Sized to their natural content
+                (no forced flex ratios) and wrapped, so a long label never gets squeezed
+                into an equal share of the row and truncated - on a narrow screen they
+                simply stack onto their own lines instead. */}
+            <Card.Actions style={{ flexWrap: "wrap", rowGap: 8, columnGap: 6, paddingHorizontal: 8 }}>
               <Button
                 mode={showTransform ? "contained" : "outlined"}
                 buttonColor={showTransform ? listBrand : undefined}
@@ -575,102 +590,163 @@ function EditWindow(props: EditMenuProps) {
               >
                 Move & resize
               </Button>
+              <Button
+                mode={showActions ? "contained" : "outlined"}
+                buttonColor={showActions ? listBrand : undefined}
+                textColor={showActions ? "#FFFFFF" : listBrand}
+                icon={showActions ? "chevron-up" : "dots-vertical"}
+                onPress={() => setShowActions(!showActions)}
+              >
+                Actions
+              </Button>
+              <Button
+                mode={showTasks ? "contained" : "outlined"}
+                buttonColor={showTasks ? listBrand : undefined}
+                textColor={showTasks ? "#FFFFFF" : listBrand}
+                icon={showTasks ? "chevron-up" : "format-list-bulleted"}
+                onPress={() => setShowTasks(!showTasks)}
+              >
+                Tasks
+              </Button>
             </Card.Actions>
-            {showTransform ? (
-              <Fragment>
-                <Card.Actions>
-                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_X)}}>
-                    <View style={{transform: [{rotate: `${xAxisAngle}rad`}]}}>
-                      <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                    </View>
-                  </Button>
-                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_X)}}>
-                    <View style={{transform: [{rotate: `${xAxisAngle + Math.PI}rad`}]}}>
-                      <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                    </View>
-                  </Button>
-                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_Z)}}>
-                    <View style={{transform: [{rotate: `${xAxisAngle + Math.PI / 2}rad`}]}}>
-                      <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                    </View>
-                  </Button>
-                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_Z)}}>
-                    <View style={{transform: [{rotate: `${xAxisAngle + 3 * Math.PI / 2}rad`}]}}>
-                      <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                    </View>
-                  </Button>
-                </Card.Actions>
-                <Card.Actions>
-                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.rotateSelectedFeatureY(-15)}}>
-                    <MaterialCommunityIcons name="axis-z-rotate-clockwise" size={18} color="#FFFFFF"/>
-                  </Button>
-                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.rotateSelectedFeatureY(15)}}>
-                    <MaterialCommunityIcons name="axis-z-rotate-counterclockwise" size={18} color="#FFFFFF"/>
-                  </Button>
-                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.scaleSelectedFeature(0.25)}}>
-                    <MaterialCommunityIcons name="plus" size={18} color="#FFFFFF"/>
-                  </Button>
-                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.scaleSelectedFeature(-0.25)}}>
-                    <MaterialCommunityIcons name="minus" size={18} color="#FFFFFF"/>
-                  </Button>
-                </Card.Actions>
-              </Fragment>
-            ) : null}
-            {/* Display chore cycle button if needed */}
-            {selectedFeature.tasks.length > 1 && selectedChore < selectedFeature.tasks.length ? (
-              <Card.Actions style={{justifyContent:"center"}}>
-                <Button onPress={() => {
-                  const taskIndex = (selectedChore + 1) % selectedFeature.tasks.length;
-                  setSelectedChore(taskIndex);
-                }}>Cycle chore: {
-                  selectedFeature.tasks[selectedChore].task_name === INVALID_TASK_NAME ? 
-                    "Unnamed " + selectedChore :
-                    selectedFeature.tasks[selectedChore].task_name
-                }</Button>
+
+            {/* Move & resize: icon-only buttons (no label to truncate), wrapped so they
+                reflow to fewer per row on a narrow screen instead of overflowing. */}
+            {showTransform && (
+              <Card.Actions style={{ flexWrap: "wrap", gap: 6, paddingHorizontal: 8 }}>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_X)}} style={{ minWidth: 44 }} compact>
+                  <View style={{transform: [{rotate: `${xAxisAngle}rad`}]}}>
+                    <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
+                  </View>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_X)}} style={{ minWidth: 44 }} compact>
+                  <View style={{transform: [{rotate: `${xAxisAngle + Math.PI}rad`}]}}>
+                    <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
+                  </View>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_Z)}} style={{ minWidth: 44 }} compact>
+                  <View style={{transform: [{rotate: `${xAxisAngle + Math.PI / 2}rad`}]}}>
+                    <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
+                  </View>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_Z)}} style={{ minWidth: 44 }} compact>
+                  <View style={{transform: [{rotate: `${xAxisAngle + 3 * Math.PI / 2}rad`}]}}>
+                    <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
+                  </View>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.rotateSelectedFeatureY(-15)}} style={{ minWidth: 44 }} compact>
+                  <MaterialCommunityIcons name="axis-z-rotate-clockwise" size={16} color="#FFFFFF"/>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.rotateSelectedFeatureY(15)}} style={{ minWidth: 44 }} compact>
+                  <MaterialCommunityIcons name="axis-z-rotate-counterclockwise" size={16} color="#FFFFFF"/>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.scaleSelectedFeature(0.25)}} style={{ minWidth: 44 }} compact>
+                  <MaterialCommunityIcons name="plus" size={16} color="#FFFFFF"/>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.scaleSelectedFeature(-0.25)}} style={{ minWidth: 44 }} compact>
+                  <MaterialCommunityIcons name="minus" size={16} color="#FFFFFF"/>
+                </Button>
               </Card.Actions>
-            ) : null}
-            {/* Display chore related functionality if needed */}
-            {selectedFeature.tasks.length > 0 ? (
-              <Card.Actions>
-                  <Button
-                    onPress={() => {
-                      // Prefill with the chore's current interval
-                      setNewFrequency(String(selectedFeature.tasks[selectedChore].frequency_days));
-                      setShowIntervalMenu(true);
-                    }}
-                  >
-                    Set interval
-                  </Button>
-                  <Button onPress={() => {selectedFeature.tasks[selectedChore].finishTask();}}>Mark complete!</Button>
-                </Card.Actions>
-            ) : null}
-            {/* Two distinct, deliberate actions - separated from the controls above so
-                neither is ever an accidental tap:
-                  - Send to dock: quick, reversible, for repositioning. No confirmation
-                    needed since nothing is lost. Just waits in the dock to be placed again.
-                  - Delete feature: permanent (removes the feature and its tasks), so it
-                    requires confirmation first. */}
-            <Card.Actions style={{ flexWrap: "wrap" }}>
-              <Button
-                mode="outlined"
-                textColor={listBrand}
-                onPress={() => {
-                  rdr.removeFeature(selectedFeature.id);
-                  setSelectedEditFeature(null);
-                }}
-              >
-                <MaterialCommunityIcons name="tray-arrow-down" size={18} color={listBrand} />
-                {"  Send to dock"}
-              </Button>
-              <Button
-                mode="outlined"
-                textColor="#D9534F"
-                onPress={() => setShowDeleteConfirm(true)}
-              >
-                <MaterialCommunityIcons name="trash-can-outline" size={18} color="#D9534F" />
-                {"  Delete feature"}
-              </Button>
-            </Card.Actions>
+            )}
+
+            {/* Actions: full labels, natural width, wrapped rather than forced into a grid */}
+            {showActions && (
+              <Card.Actions style={{ flexWrap: "wrap", rowGap: 8, columnGap: 6, paddingHorizontal: 8 }}>
+                <Button
+                  mode="outlined"
+                  textColor={listBrand}
+                  onPress={() => {
+                    setNewFrequency(String(selectedFeature.tasks[selectedChore].frequency_days));
+                    setShowIntervalMenu(true);
+                  }}
+                  icon="clock-outline"
+                >
+                  Set interval
+                </Button>
+                <Button
+                  mode="contained"
+                  buttonColor="#4caf50"
+                  textColor="#FFFFFF"
+                  onPress={() => {
+                    selectedFeature.tasks[selectedChore].finishTask();
+                  }}
+                  icon="check-circle"
+                >
+                  Mark complete
+                </Button>
+                <Button
+                  mode="outlined"
+                  textColor={listBrand}
+                  onPress={() => {
+                    rdr.removeFeature(selectedFeature.id);
+                    setSelectedEditFeature(null);
+                  }}
+                  icon="tray-arrow-down"
+                >
+                  Send to dock
+                </Button>
+                <Button
+                  mode="outlined"
+                  textColor="#D9534F"
+                  onPress={() => {
+                    setShowDeleteConfirm(true);
+                  }}
+                  icon="trash-can-outline"
+                >
+                  Delete feature
+                </Button>
+              </Card.Actions>
+            )}
+
+            {/* Tasks: tap one to make it the target of the Actions above (interval/complete) */}
+            {showTasks && selectedFeature.tasks.length > 0 && (
+              <Card.Actions style={{ flexDirection: "column", alignItems: "stretch", gap: 6, paddingHorizontal: 8, paddingBottom: 10 }}>
+                <Text style={{ fontSize: 11, color: "#8A94A3", marginBottom: 2 }}>
+                  Tap a task to select it for Actions
+                </Text>
+                {selectedFeature.tasks.map((task, idx) => {
+                  const daysLeft = daysUntilNextDue(task);
+                  const color = healthColor(healthPercent(task));
+                  const isSelected = selectedChore === idx;
+                  return (
+                    <Pressable
+                      key={task.id}
+                      onPress={() => setSelectedChore(idx)}
+                      style={({ pressed, hovered }) => [
+                        {
+                          flexDirection: "row",
+                          alignItems: "center",
+                          paddingVertical: 8,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: isSelected ? listSelection : (Platform.OS === "web" && hovered ? "#F2F4F7" : "#FFFFFF"),
+                          borderWidth: isSelected ? 2 : 1,
+                          borderColor: isSelected ? listBrand : "#E2E5EA",
+                        },
+                        pressed && { opacity: 0.75 },
+                      ]}
+                    >
+                      {/* Status dot - same green/yellow/red scale as the list view's health bar */}
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color, marginRight: 10 }} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ color: isSelected ? listBrand : "#242C38", fontWeight: isSelected ? "700" : "600", fontSize: 14 }}>
+                          {task.task_name === INVALID_TASK_NAME ? `Unnamed ${idx}` : task.task_name}
+                        </Text>
+                        <Text style={{ color: "#8A94A3", fontSize: 11, marginTop: 1 }}>
+                          Every {task.frequency_days} {task.frequency_days === 1 ? "day" : "days"}
+                        </Text>
+                      </View>
+                      <Text style={{ color, fontWeight: "700", fontSize: 13, marginLeft: 8 }}>
+                        {daysLeft} {daysLeft === 1 ? "day" : "days"}
+                      </Text>
+                      {isSelected && (
+                        <MaterialCommunityIcons name="check-circle" size={16} color={listBrand} style={{ marginLeft: 8 }} />
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </Card.Actions>
+            )}
           </Card>
         ) : isEditing && !selectedFeature ? (
           <Text style={{color: "red"}}>Select a feature to edit</Text>
