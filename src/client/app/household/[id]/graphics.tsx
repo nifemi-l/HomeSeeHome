@@ -20,6 +20,8 @@ Revision date:
   - 4/16/26: Add 3D scale, rotation database support
   - 4/18/26: Highlight selected task and health bar
   - 4/20/26: Add inventory bar to manage adding features to the graphical view
+  - 7/6/26: Compact themed delete/interval dialogs, transform controls behind a
+            "Move & resize" toggle, and a hover name tag for features under the cursor
 Preconditions: A React application asking for the home page
 Postconditions: A home page component ready for rendering
 Errors: The home page will always be delivered successfully. 
@@ -33,16 +35,19 @@ Known faults: None
 // ***********************************************************
 
 // Prevents URL changing to bypass login.
-import { AuthLoadingScreen, useAuthGuard } from "../../../utils/useAuthGuard";
+import { useAuthGuard } from "../../../utils/useAuthGuard";
+
+// Shared staged-loading overlay (session check -> fetch -> renderer prep)
+import LoadingOverlay from "../../../components/LoadingOverlay";
 
 // Import required components
 import React, { useEffect, useState, useSyncExternalStore, useRef, Fragment } from 'react';
 import { ExpoWebGLRenderingContext, GLView } from 'expo-gl';
-import { ActivityIndicator, LayoutChangeEvent, Platform, Pressable, View, useWindowDimensions } from "react-native";
+import { LayoutChangeEvent, Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Text } from "expo-router/react-navigation";
-import { Button, PaperProvider, Card, Menu, TextInput, Dialog, Portal } from 'react-native-paper';
+import { Button, PaperProvider, Card, TextInput, Dialog, Portal } from 'react-native-paper';
 import { useLocalSearchParams } from "expo-router";
 import { appPaperLightTheme } from "../../../theme/paperTheme";
 import { listBrand } from "../../../theme/colors";
@@ -158,9 +163,60 @@ function getSelectedPlaceFeature() {
   return rdr.selectedPlaceFeature;
 }
 
+// Name of the feature under the cursor plus the cursor position, for the hover name tag.
+// The name comes from the renderer's per-frame pick pass; the position from mousemove.
+let hoveredFeatureName: string | null = null;
+let hoverScreenX = 0;
+let hoverScreenY = 0;
+
+function notifyHoverListeners() {
+  reactListeners.forEach((cb) => cb(hoveredFeatureName));
+}
+
+// called from the draw loop with the current pick result
+function setHoveredFeatureName(name: string | null) {
+  if (name !== hoveredFeatureName) {
+    hoveredFeatureName = name;
+    notifyHoverListeners();
+  }
+}
+
 // clear out selected place feature
 function clearSelectedPlaceFeature() {
   setSelectedPlaceFeature(null);
+}
+
+// Track whether the renderer has drawn its first frame. Between the feature fetch finishing
+// and that first frame, the GL context is compiling shaders and loading models, so the UI
+// shows a "preparing" overlay until this flips true (see SceneLoadingOverlay).
+let sceneFirstFrameDrawn = false;
+
+// setter for the first-frame flag so listeners are all notified on update
+function setSceneFirstFrameDrawn(val: boolean) {
+  sceneFirstFrameDrawn = val;
+  reactListeners.forEach((cb) => cb(sceneFirstFrameDrawn));
+}
+
+// getter for listeners
+function getSceneFirstFrameDrawn() {
+  return sceneFirstFrameDrawn;
+}
+
+// Which phase of the load this screen is in, for the loading overlay's status text.
+// "empty" means the fetch succeeded but returned no features - there is no 3D scene
+// coming, so the overlay treats that as done and never shows the "preparing" label.
+type LoadingStage = "fetching" | "preparing" | "empty";
+let loadingStage: LoadingStage = "fetching";
+
+// setter for the loading stage so listeners are all notified on update
+function setLoadingStage(stage: LoadingStage) {
+  loadingStage = stage;
+  reactListeners.forEach((cb) => cb(loadingStage));
+}
+
+// getter for listeners
+function getLoadingStage() {
+  return loadingStage;
 }
 
 // ***********************************************************
@@ -324,6 +380,54 @@ function Inventory(props: InventoryProps) {
       ) : null);
 }
 
+// Small label that follows the cursor and names the feature under it (web hover only)
+function HoverNameTag() {
+  const [tag, setTag] = useState<{ name: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    return subListener(() => {
+      setTag(
+        hoveredFeatureName
+          ? { name: hoveredFeatureName, x: hoverScreenX, y: hoverScreenY }
+          : null
+      );
+    });
+  }, []);
+
+  if (Platform.OS !== "web" || !tag) return null;
+
+  // Mouse coords are window-relative; the canvas container sits below the toolbar
+  const toolbarHeight = windowHeight - viewHeight;
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        left: tag.x + 14,
+        top: tag.y - toolbarHeight + 14,
+        backgroundColor: "rgba(20,30,45,0.9)",
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        zIndex: 12,
+      }}
+    >
+      <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "600" }}>{tag.name}</Text>
+    </View>
+  );
+}
+
+// Dialog card styling shared by the delete and interval prompts; matches the list view's
+// delete dialog so popups look the same across both views
+const dialogCardStyle = {
+  borderRadius: 16,
+  maxWidth: 400,
+  width: "92%",
+  alignSelf: "center",
+} as const;
+const dialogTitleStyle = { fontSize: 18, fontWeight: "700" } as const;
+const dialogBodyStyle = { lineHeight: 22 } as const;
+
 // A window that will appear to edit feature info
 function EditWindow(props: EditMenuProps) {
   // if in edit mode or not
@@ -333,6 +437,8 @@ function EditWindow(props: EditMenuProps) {
   const selectedFeature = useSyncExternalStore(subListener, getSelectedEditFeature); // will be updated by GL, triggers a re-render on change
   // Set the chore selected for our feature
   const [selectedChore, setSelectedChore] = useState(0);
+  // Whether the move/rotate/scale controls are expanded (collapsed by default to keep the panel small)
+  const [showTransform, setShowTransform] = useState(false);
   // Store: Are we changing the interval yet?
   const [showIntervalMenu, setShowIntervalMenu] = useState(false);
   // The frequency update value we want to store for updates
@@ -368,6 +474,7 @@ function EditWindow(props: EditMenuProps) {
   useEffect(() => {
     // Just reset to a clean state
     setSelectedChore(0);
+    setShowTransform(false);
   }, [selectedFeature])
 
   return (
@@ -457,42 +564,58 @@ function EditWindow(props: EditMenuProps) {
             mode='contained'
           >
             <Card.Title title={selectedFeature.feature_name}/>
+            {/* Transform controls live behind a toggle so the panel stays small by default */}
             <Card.Actions>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_X)}}>
-                <View style={{transform: [{rotate: `${xAxisAngle}rad`}]}}>
-                  <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                </View>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_X)}}>
-                <View style={{transform: [{rotate: `${xAxisAngle + Math.PI}rad`}]}}>
-                  <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                </View>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_Z)}}>
-                <View style={{transform: [{rotate: `${xAxisAngle + Math.PI / 2}rad`}]}}>
-                  <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                </View>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_Z)}}>
-                <View style={{transform: [{rotate: `${xAxisAngle + 3 * Math.PI / 2}rad`}]}}>
-                  <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                </View>
+              <Button
+                mode={showTransform ? "contained" : "outlined"}
+                buttonColor={showTransform ? listBrand : undefined}
+                textColor={showTransform ? "#FFFFFF" : listBrand}
+                icon={showTransform ? "chevron-up" : "cursor-move"}
+                onPress={() => setShowTransform(!showTransform)}
+              >
+                Move & resize
               </Button>
             </Card.Actions>
-            <Card.Actions>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.rotateSelectedFeatureY(-15)}}>
-                <MaterialCommunityIcons name="axis-z-rotate-clockwise" size={18} color="#FFFFFF"/>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.rotateSelectedFeatureY(15)}}>
-                <MaterialCommunityIcons name="axis-z-rotate-counterclockwise" size={18} color="#FFFFFF"/>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.scaleSelectedFeature(0.25)}}>
-                <MaterialCommunityIcons name="plus" size={18} color="#FFFFFF"/>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.scaleSelectedFeature(-0.25)}}>
-                <MaterialCommunityIcons name="minus" size={18} color="#FFFFFF"/>
-              </Button>
-            </Card.Actions>
+            {showTransform ? (
+              <Fragment>
+                <Card.Actions>
+                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_X)}}>
+                    <View style={{transform: [{rotate: `${xAxisAngle}rad`}]}}>
+                      <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
+                    </View>
+                  </Button>
+                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_X)}}>
+                    <View style={{transform: [{rotate: `${xAxisAngle + Math.PI}rad`}]}}>
+                      <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
+                    </View>
+                  </Button>
+                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_Z)}}>
+                    <View style={{transform: [{rotate: `${xAxisAngle + Math.PI / 2}rad`}]}}>
+                      <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
+                    </View>
+                  </Button>
+                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_Z)}}>
+                    <View style={{transform: [{rotate: `${xAxisAngle + 3 * Math.PI / 2}rad`}]}}>
+                      <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
+                    </View>
+                  </Button>
+                </Card.Actions>
+                <Card.Actions>
+                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.rotateSelectedFeatureY(-15)}}>
+                    <MaterialCommunityIcons name="axis-z-rotate-clockwise" size={18} color="#FFFFFF"/>
+                  </Button>
+                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.rotateSelectedFeatureY(15)}}>
+                    <MaterialCommunityIcons name="axis-z-rotate-counterclockwise" size={18} color="#FFFFFF"/>
+                  </Button>
+                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.scaleSelectedFeature(0.25)}}>
+                    <MaterialCommunityIcons name="plus" size={18} color="#FFFFFF"/>
+                  </Button>
+                  <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.scaleSelectedFeature(-0.25)}}>
+                    <MaterialCommunityIcons name="minus" size={18} color="#FFFFFF"/>
+                  </Button>
+                </Card.Actions>
+              </Fragment>
+            ) : null}
             {/* Display chore cycle button if needed */}
             {selectedFeature.tasks.length > 1 && selectedChore < selectedFeature.tasks.length ? (
               <Card.Actions style={{justifyContent:"center"}}>
@@ -509,24 +632,15 @@ function EditWindow(props: EditMenuProps) {
             {/* Display chore related functionality if needed */}
             {selectedFeature.tasks.length > 0 ? (
               <Card.Actions>
-                  {/* The menu for updating intervals */}
-                  <Menu
-                    visible={isEditing && selectedFeature !== null && showIntervalMenu}
-                    onDismiss={() => {setShowIntervalMenu(false); setNewFrequency("0")}}
-                    anchor={<Button onPress={() => {setShowIntervalMenu(true)}}>Set interval</Button>}
+                  <Button
+                    onPress={() => {
+                      // Prefill with the chore's current interval
+                      setNewFrequency(String(selectedFeature.tasks[selectedChore].frequency_days));
+                      setShowIntervalMenu(true);
+                    }}
                   >
-                    <TextInput label="The interval in whole days..." mode="outlined" value={newFrequency} keyboardType='numeric'
-                      onChangeText={(t) => {
-                        // Convert our input to a number, check if it is not a number, then apply changes if we have valid input
-                        // They must be a number, an integer (we round), and >= 1
-                        const fixed = Number(t);
-                        if (!Number.isNaN(fixed) && fixed >= 1) {
-                          selectedFeature.tasks[selectedChore].changeFrequency(Math.round(fixed))} // we round to the nearest integer
-                          setNewFrequency(t);
-                        }
-                      }>
-                    </TextInput>
-                  </Menu>
+                    Set interval
+                  </Button>
                   <Button onPress={() => {selectedFeature.tasks[selectedChore].finishTask();}}>Mark complete!</Button>
                 </Card.Actions>
             ) : null}
@@ -563,10 +677,15 @@ function EditWindow(props: EditMenuProps) {
         ) : null }
 
         <Portal>
-          <Dialog visible={showDeleteConfirm} onDismiss={() => setShowDeleteConfirm(false)}>
-            <Dialog.Title>Delete feature?</Dialog.Title>
+          {/* Compact card, same shape as the list view's delete prompt */}
+          <Dialog
+            visible={showDeleteConfirm}
+            onDismiss={() => setShowDeleteConfirm(false)}
+            style={dialogCardStyle}
+          >
+            <Dialog.Title style={dialogTitleStyle}>Delete feature?</Dialog.Title>
             <Dialog.Content>
-              <Text>
+              <Text style={dialogBodyStyle}>
                 {selectedFeature ? `"${selectedFeature.name}"` : "This feature"} and all of its tasks will be permanently deleted. This cannot be undone.
               </Text>
             </Dialog.Content>
@@ -574,7 +693,7 @@ function EditWindow(props: EditMenuProps) {
               <Button mode="text" onPress={() => setShowDeleteConfirm(false)}>Cancel</Button>
               <Button
                 mode="contained"
-                buttonColor="#D9534F"
+                buttonColor="#c62828"
                 textColor="#FFFFFF"
                 onPress={() => {
                   if (selectedFeature) {
@@ -588,6 +707,47 @@ function EditWindow(props: EditMenuProps) {
               </Button>
             </Dialog.Actions>
           </Dialog>
+
+          {/* Interval editor: saves once on Save, not on every keystroke */}
+          <Dialog
+            visible={showIntervalMenu && selectedFeature !== null}
+            onDismiss={() => setShowIntervalMenu(false)}
+            style={dialogCardStyle}
+          >
+            <Dialog.Title style={dialogTitleStyle}>Set interval</Dialog.Title>
+            <Dialog.Content style={{ gap: 12 }}>
+              <Text style={dialogBodyStyle}>
+                How many days between completions of{" "}
+                {selectedFeature && selectedFeature.tasks[selectedChore]
+                  ? `"${selectedFeature.tasks[selectedChore].task_name}"`
+                  : "this chore"}?
+              </Text>
+              <TextInput
+                label="Days"
+                mode="outlined"
+                value={newFrequency}
+                keyboardType="numeric"
+                onChangeText={setNewFrequency}
+              />
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button mode="text" onPress={() => setShowIntervalMenu(false)}>Cancel</Button>
+              <Button
+                mode="contained"
+                buttonColor={listBrand}
+                textColor="#FFFFFF"
+                disabled={Number.isNaN(Number(newFrequency)) || Number(newFrequency) < 1}
+                onPress={() => {
+                  if (selectedFeature && selectedFeature.tasks[selectedChore]) {
+                    selectedFeature.tasks[selectedChore].changeFrequency(Math.round(Number(newFrequency)));
+                  }
+                  setShowIntervalMenu(false);
+                }}
+              >
+                Save
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
         </Portal>
     </View>
   );
@@ -598,12 +758,30 @@ function EditWindow(props: EditMenuProps) {
 // the page. Also uses a container to grab user gestures (e.g. rotating on the screen or panning or screen taps (clicks))
 export default function Index() {
   const { isCheckingAuth, isAuthenticated } = useAuthGuard();
+  const checkingSession = isCheckingAuth || !isAuthenticated;
 
-  if (isCheckingAuth || !isAuthenticated) {
-    return <AuthLoadingScreen />;
-  }
+  // One overlay instance spans the session check AND everything after it (data fetch,
+  // renderer prep), so the user sees a single continuous spinner whose status text
+  // transitions in place - never a second, different-looking loader.
+  const sceneReady = useSyncExternalStore(subListener, getSceneFirstFrameDrawn);
+  const stage = useSyncExternalStore(subListener, getLoadingStage);
+  const loadingDone = !checkingSession && (sceneReady || stage === "empty");
+  const loadingText = checkingSession
+    ? "Checking your session..."
+    : stage === "preparing"
+      ? "Preparing your 3D home..."
+      : "Fetching household data...";
 
-  return <AuthenticatedGraphicsScreen />;
+  return (
+    <View style={{ flex: 1 }}>
+      {checkingSession ? (
+        <View style={{ flex: 1, backgroundColor: "#F0F2F5" }} />
+      ) : (
+        <AuthenticatedGraphicsScreen />
+      )}
+      <LoadingOverlay done={loadingDone} text={loadingText} />
+    </View>
+  );
 }
 
 function AuthenticatedGraphicsScreen() {
@@ -638,6 +816,13 @@ function AuthenticatedGraphicsScreen() {
 
       const pixelCoords = getPixelFromRaw(rdrRef.current.glRef, event.clientX, event.clientY, viewWidth, viewHeight, windowHeight); // convert mouse position to coordinates in the GL drawing buffer
       setPixelFrustrum(rdrRef.current.glRef, rdr.cam.pixelPickFrustrum, FOV_RADIANS, NEAR_CLIP, FAR_CLIP, pixelCoords.pixelX, pixelCoords.pixelY);
+
+      // Keep the hover name tag glued to the cursor while a feature is hovered
+      hoverScreenX = event.clientX;
+      hoverScreenY = event.clientY;
+      if (hoveredFeatureName) {
+        notifyHoverListeners();
+      }
     }
 
     // Register the mouse move listner
@@ -756,6 +941,9 @@ function AuthenticatedGraphicsScreen() {
   // Reload the features of our housewhenever the household ID changes.
   // Also mostly from list.tsx (thanks again Nifemi)
   useEffect(() => {
+    // Starting (or restarting) the load - reflect that in the overlay's status text
+    setLoadingStage("fetching");
+
     // Get household room data
     fetchHouseholdRooms(householdId)
       .then((roomsData) => {
@@ -808,6 +996,10 @@ function AuthenticatedGraphicsScreen() {
               if (mapped.length > 0) {
                 setEmptyFeatures(false);
               }
+
+              // Advance the overlay: renderer prep comes next, unless there's nothing to
+              // render - then the load is simply over and the "preparing" label never shows
+              setLoadingStage(mapped.length > 0 ? "preparing" : "empty");
             })
       .catch((e) => {
         console.error("Failed to fetch features for household", householdId, e);
@@ -821,6 +1013,9 @@ function AuthenticatedGraphicsScreen() {
         cancelAnimationFrame(rdrRef.current.frameId);
         rdrRef.current.frameId = null;
       }
+      // Reset so the loading overlay starts from a clean state if the user navigates back
+      setSceneFirstFrameDrawn(false);
+      setLoadingStage("fetching");
     }
   }, []);
 
@@ -840,7 +1035,8 @@ function AuthenticatedGraphicsScreen() {
   const ROOM_CHEVRON_COLOR_HOVER = !ROOM_ACCENT_COLOR ? "#5EFF9A" : tinycolor(ROOM_ACCENT_COLOR).brighten(10).toHexString();
 
   return (
-    featureFetchSuccess && !emptyFeatures ? (
+    <View style={{ flex: 1 }}>
+    {featureFetchSuccess && !emptyFeatures ? (
       <Fragment>
         <PaperProvider theme={appPaperLightTheme}>
         <View
@@ -955,7 +1151,8 @@ function AuthenticatedGraphicsScreen() {
           </View>
 
           <EditWindow tool={currentTool} updateToolCallback={setCurrentTool}/>
-          <Inventory tool={currentTool}/> 
+          <Inventory tool={currentTool}/>
+          <HoverNameTag />
         </View>
       </PaperProvider>
     </Fragment>
@@ -967,14 +1164,11 @@ function AuthenticatedGraphicsScreen() {
         </Text>
       </View>
     ) : (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        {/* Display a loading bar while we wait to fetch features */}
-        <ActivityIndicator size="large" />
-        <Text style={{fontSize: 16, color: "#5B6B7F", fontWeight: "600"}}>
-          Fetching household data...
-        </Text>
-      </View>
-    )
+      // Pre-fetch placeholder. The overlay rendered by Index covers this; it just keeps
+      // the background matched to the overlay so there's nothing to see behind the fade
+      <View style={{ flex: 1, backgroundColor: "#F0F2F5" }} />
+    )}
+    </View>
   );
 }
 
@@ -985,8 +1179,21 @@ function AuthenticatedGraphicsScreen() {
 // This is the function called to create the WebGL context, setup extensions if needed, read and compile shaders, and do all
 // other prep work which is neccessary to initialize our renderer. 
 async function onContextCreate(gl: ExpoWebGLRenderingContext) {
+  // A fresh context means nothing has been drawn yet - keep the preparing overlay up
+  setSceneFirstFrameDrawn(false);
+
+  // Kill any loop still running against an old context. The unmount cleanup normally
+  // handles this, but it can't catch a loop whose init() only resolved after unmount
+  stopRenderLoop();
+
   // Initialize the renderer and WebGL context
   await rdr.init(gl);
+
+  // If another context superseded this one while init was awaiting, don't start a
+  // competing render loop for the stale context
+  if (rdr.glRef !== gl) {
+    return;
+  }
 
   // Setup callback functions so that we can update the UI from the renderer later
   rdr.setUnplacedFeatureCallback(setUnplacedFeatures);
@@ -994,6 +1201,14 @@ async function onContextCreate(gl: ExpoWebGLRenderingContext) {
 
   // Start drawing frames. This is a recursive animation function
   drawFrame(rdr.lastFrameTime);
+}
+
+// Cancel the active render loop, if any
+function stopRenderLoop() {
+  if (rdr.frameId !== null) {
+    cancelAnimationFrame(rdr.frameId);
+    rdr.frameId = null;
+  }
 }
 
 // ***********************************************************
@@ -1026,6 +1241,11 @@ function drawFrame(time: number) {
     renderScene(delta);
     rdr.setHighlightedFeature(getPickedObjectFromPointOnScreen(rdr.glRef));
 
+    // Resolve the hovered feature's name for the cursor tag
+    const hoveredId = rdr.highlightedFeatureID;
+    const hovered = hoveredId ? rdr.house.renderableFeatures.find((f) => f.id === hoveredId) : undefined;
+    setHoveredFeatureName(hovered ? hovered.feature_name : null);
+
     // Call the render method to actually draw all objects
     // For the cube draw calls, we need to switch to the correct vertex attribute and buffer configuration. 
     // This also updates our view matrix so we can rotate the world around
@@ -1034,6 +1254,12 @@ function drawFrame(time: number) {
   
     // End frame and then request a new animation frame with this same method (recursive)
     rdr.glRef.endFrameEXP();
+
+    // The first completed frame means the scene is on screen - fade out the preparing overlay
+    if (!getSceneFirstFrameDrawn()) {
+      setSceneFirstFrameDrawn(true);
+    }
+
     rdr.frameId = window.requestAnimationFrame(drawFrame);
 }
 

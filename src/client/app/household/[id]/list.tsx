@@ -22,6 +22,7 @@ Revision date:
   - 4/14/26: Collapsible room grouping, room CRUD, feature room assignment
   - 4/15/26: Remove room_number and room_name parameters from the feature object
   - 4/20/26: Set XYZ positions on feature creation to undefined so they become NULL in the DB
+  - 7/6/26: Due text drops " left" suffix and colors from live health (yellow/red near due)
 Preconditions: Flask server reachable at EXPO_PUBLIC_API_URL with the household's data in the DB
 Postconditions: Renders an interactive task list that stays in sync with the database
 Errors: Shows error state with retry button if API is unreachable
@@ -36,7 +37,9 @@ Known faults: None
 //TODO: fix highlight not working
 
 // Prevents URL changing to bypass login.
-import { AuthLoadingScreen, useAuthGuard } from "../../../utils/useAuthGuard";
+import { useAuthGuard } from "../../../utils/useAuthGuard";
+// Shared staged-loading overlay (session check -> data load)
+import LoadingOverlay from "../../../components/LoadingOverlay";
 import { useResponsiveWidth } from "../../../utils/useResponsiveWidth";
 // Import react hooks we need for state, lifecycle, and performance
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -156,7 +159,7 @@ function TaskRow({
     onCompleteTask: (id: number) => void;
 }) {
   const daysLeft = daysUntilNextDue(task);
-  const duePhrase = `${daysLeft} ${daysLeft === 1 ? "day" : "days"} left`;
+  const duePhrase = `${daysLeft} ${daysLeft === 1 ? "day" : "days"}`;
   const [hoverRow, hoverRowHandlers] = useWebHover();
   const [hoverCheck, hoverCheckHandlers] = useWebHover();
   const [hoverDone, hoverDoneHandlers] = useWebHover();
@@ -217,7 +220,9 @@ function TaskRow({
         <HealthBar task={task} />
         <Text style={styles.taskDueText}>
           {!isCompact && "Time Until Due: "}
-          <Text style={[styles.taskDueText, { color: healthColor(task.healthPercent) }]}>
+          {/* healthPercent(task) computes the live value; task.healthPercent is a stored
+              field only the 3D renderer refreshes, so it read green here even when due */}
+          <Text style={[styles.taskDueText, { color: healthColor(healthPercent(task)) }]}>
             {duePhrase}
           </Text>
         </Text>
@@ -1170,18 +1175,34 @@ type DeleteDialogState =
   | { mode: "room"; roomId: number; roomName: string }
   | { mode: "unassignedLabel"; currentLabel: string };
 
-// Main list screen (connected to the database via the Flask API) 
+// Main list screen (connected to the database via the Flask API)
 export default function ListScreen() {
   const { isCheckingAuth, isAuthenticated } = useAuthGuard();
+  const checkingSession = isCheckingAuth || !isAuthenticated;
 
-  if (isCheckingAuth || !isAuthenticated) {
-    return <AuthLoadingScreen />;
-  }
+  // Whether the list content below the overlay is ready to be revealed (data loaded, or
+  // the load failed and the error/retry UI needs to be visible)
+  const [listReady, setListReady] = useState(false);
 
-  return <AuthenticatedListScreen />;
+  // One overlay instance spans the session check AND the data load, so the user sees a
+  // single continuous spinner whose status text transitions in place - never a big
+  // session spinner followed by a second, different-looking loader.
+  return (
+    <View style={{ flex: 1 }}>
+      {checkingSession ? (
+        <View style={{ flex: 1, backgroundColor: "#F0F2F5" }} />
+      ) : (
+        <AuthenticatedListScreen onReadyChange={setListReady} />
+      )}
+      <LoadingOverlay
+        done={!checkingSession && listReady}
+        text={checkingSession ? "Checking your session..." : "Loading your household..."}
+      />
+    </View>
+  );
 }
 
-function AuthenticatedListScreen() {
+function AuthenticatedListScreen({ onReadyChange }: { onReadyChange?: (ready: boolean) => void }) {
   // Grab the household id from the route (e.g. /household/3/list -> id = "3")
   const { id } = useLocalSearchParams<{ id: string }>();
   const householdId = Number(id) || 1; // fallback to 1 if somehow missing
@@ -1197,6 +1218,12 @@ function AuthenticatedListScreen() {
   const [householdName, setHouseholdName] = useState<string | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>(null);
   const [hoverRetry, hoverRetryHandlers] = useWebHover();
+
+  // Tell the parent when the content is ready to be revealed. A failed load counts as
+  // ready too - the overlay has to get out of the way of the error/retry UI.
+  useEffect(() => {
+    onReadyChange?.(loaded || error !== null);
+  }, [loaded, error, onReadyChange]);
 
   // Fetch all features + tasks from the server and map them into our local class instances
   const loadFromApi = useCallback(() => {

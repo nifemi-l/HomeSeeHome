@@ -596,9 +596,10 @@ export class MeshManager {
 
   // NOTE: Depends on the proper VAOs being bound outside of this
   drawMesh(name: string) {
-    // Ensure we're valid and initialized
+    // Ensure we're valid and initialized. Skip the frame quietly - models still loading is
+    // a normal transient state, and this runs per-frame so any logging here floods the
+    // console (and surfaces as an error toast in dev builds)
     if (!this.valid) {
-      console.error("MeshManager not valid yet.");
       return;
     }
 

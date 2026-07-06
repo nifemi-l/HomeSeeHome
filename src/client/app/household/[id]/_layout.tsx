@@ -20,22 +20,24 @@ Known faults: None
 import { Slot, useLocalSearchParams, usePathname, router } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import ViewToggle from "../../../components/ViewToggle";
-import { AuthLoadingScreen, useAuthGuard } from "../../../utils/useAuthGuard";
+import { useAuthGuard } from "../../../utils/useAuthGuard";
 
 export default function HouseholdLayout() {
+  // The guard runs for its redirect side effect (kicks unauthenticated users to /login),
+  // but the layout chrome deliberately does NOT block on it: the dock renders from the
+  // first frame - as skeleton placeholders while the session check is in flight - and the
+  // child screens, which run their own guard, keep their staged loading overlay
+  // ("Checking your session..." -> data stages) pinned underneath it. Blocking here
+  // instead showed a full-screen spinner that jumped into a smaller content-area spinner
+  // when the dock appeared, which read as choppy.
   const { isCheckingAuth, isAuthenticated } = useAuthGuard();
 
-  if (isCheckingAuth || !isAuthenticated) {
-    return <AuthLoadingScreen />;
-  }
-
-  return <AuthenticatedHouseholdLayout />;
+  return <HouseholdLayoutContent dockLoading={isCheckingAuth || !isAuthenticated} />;
 }
 
-function AuthenticatedHouseholdLayout() {
+function HouseholdLayoutContent({ dockLoading }: { dockLoading: boolean }) {
   // Read the household id from the dynamic route so toggle navigation stays in the same household
   const { id } = useLocalSearchParams<{ id: string }>();
-  const householdId = Number(id);
   // Determine the current household sub-route so we know which segment is active
   const pathname = usePathname();
   const isList = pathname === `/household/${id}/list`; // true on the list screen, false on graphics
@@ -60,7 +62,7 @@ function AuthenticatedHouseholdLayout() {
 
   return (
     <View style={styles.container}>
-      <ViewToggle active={active} onChange={handleToggle} householdId={householdId} />
+      <ViewToggle active={active} onChange={handleToggle} loading={dockLoading} />
       <Slot />
     </View>
   );
