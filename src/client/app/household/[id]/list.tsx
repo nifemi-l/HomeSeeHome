@@ -76,8 +76,8 @@ import {
   TASK_ICONS,
   TASK_PRESETS,
   healthPercent,
-  daysUntilNextDue,
   healthColor,
+  getDueBadge,
 } from "../../../data/householdUtils";
 
 // API functions for talking to the Flask backend
@@ -158,16 +158,13 @@ function TaskRow({
     onRequestDeleteTask: (task: Task) => void;
     onCompleteTask: (id: number) => void;
 }) {
-  const daysLeft = daysUntilNextDue(task);
-  const duePhrase = `${daysLeft} ${daysLeft === 1 ? "day" : "days"}`;
+  const due = getDueBadge(task);
   const [hoverRow, hoverRowHandlers] = useWebHover();
   const [hoverCheck, hoverCheckHandlers] = useWebHover();
   const [hoverDone, hoverDoneHandlers] = useWebHover();
   const [hoverDel, hoverDelHandlers] = useWebHover();
-  // Below this width the row's fixed-size controls (checkbox, icon, two action
-  // buttons) leave too little room for the name/health-bar/due-text column,
-  // so it wraps awkwardly. Shrink the controls and drop the due-text label
-  // prefix to give that column more breathing room.
+  // At narrow widths the fixed-size controls crowd out the task's text column,
+  // so shrink them to give it room.
   const isCompact = useResponsiveWidth() < 420;
 
   return (
@@ -218,14 +215,11 @@ function TaskRow({
           {task.name}
         </Text>
         <HealthBar task={task} />
-        <Text style={styles.taskDueText}>
-          {!isCompact && "Time Until Due: "}
-          {/* healthPercent(task) computes the live value; task.healthPercent is a stored
-              field only the 3D renderer refreshes, so it read green here even when due */}
-          <Text style={[styles.taskDueText, { color: healthColor(healthPercent(task)) }]}>
-            {duePhrase}
+        <View style={[styles.dueBadge, { backgroundColor: due.backgroundColor }]}>
+          <Text style={[styles.dueBadgeText, { color: due.color }]} numberOfLines={1}>
+            {due.label}
           </Text>
-        </Text>
+        </View>
       </View>
 
       {/* Green check button to mark task as done (resets the health bar to 100%) */}
@@ -2208,12 +2202,18 @@ const styles = StyleSheet.create({
         color: "#333",
         marginBottom: 4,
     },
-    taskDueText: {
-        fontSize: 12,
-        fontWeight: "300",
-        color: "#333",
-        marginBottom: 4,
-        flexShrink: 1,
+    dueBadge: {
+        alignSelf: "flex-start",
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        marginTop: 3,
+        maxWidth: "100%",
+    },
+    dueBadgeText: {
+        fontSize: 13,
+        fontWeight: "600",
+        lineHeight: 15.6,
     },
     completeBtn: {
         padding: 6,

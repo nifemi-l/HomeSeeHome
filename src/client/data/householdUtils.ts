@@ -75,6 +75,60 @@ export function healthColor(percent: number): string {
   return "#f44336"; // red for overdue
 }
 
+export interface DueBadgeInfo {
+  label: string;
+  backgroundColor: string;
+  color: string;
+}
+
+const DUE_DANGER = { backgroundColor: "#fdebea", color: "#b42318" };
+const DUE_WARNING = { backgroundColor: "#fff3d6", color: "#9a5b00" };
+const DUE_SAFE = { backgroundColor: "#e8f6ed", color: "#247a3b" };
+const DUE_MUTED = { backgroundColor: "#f2f4f7", color: "#475467" };
+
+// Keyed by healthColor()'s output so the pill always matches the bar.
+const DUE_TINT_BY_HEALTH: Record<string, { backgroundColor: string; color: string }> = {
+  "#4caf50": DUE_SAFE,
+  "#ff9800": DUE_WARNING,
+  "#f44336": DUE_DANGER,
+};
+
+export function getDueBadge(task: Task): DueBadgeInfo {
+  if (!task.frequency_days || Number.isNaN(task.frequency_days)) {
+    return { label: "No due date", ...DUE_MUTED };
+  }
+
+  const msInADay = 1000 * 60 * 60 * 24;
+  const rawLast = task.last_completed;
+  let remainingDays: number;
+
+  if (!rawLast) {
+    remainingDays = task.frequency_days;
+  } else {
+    const last = rawLast instanceof Date ? rawLast : new Date(rawLast as string);
+    const lastMs = last.getTime();
+    if (Number.isNaN(lastMs)) {
+      return { label: "No due date", ...DUE_MUTED };
+    }
+    const nextDueMs = lastMs + task.frequency_days * msInADay;
+    // ceil so a partly-overdue task reads "overdue by 1 day", not 0
+    remainingDays = Math.ceil((nextDueMs - Date.now()) / msInADay);
+  }
+
+  let label: string;
+  if (remainingDays <= 0) {
+    const overdueDays = -remainingDays;
+    label = overdueDays === 0 ? "Due today" : `Overdue by ${overdueDays} ${overdueDays === 1 ? "day" : "days"}`;
+  } else if (remainingDays === 1) {
+    label = "Due tomorrow";
+  } else {
+    label = `Due in ${remainingDays} days`;
+  }
+
+  const tint = DUE_TINT_BY_HEALTH[healthColor(healthPercent(task))] ?? DUE_MUTED;
+  return { label, ...tint };
+}
+
 // key we use in AsyncStorage
 const STORAGE_KEY = "household_features";
 
