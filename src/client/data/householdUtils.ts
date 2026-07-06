@@ -9,6 +9,7 @@ Revision date:
              frequency presets, and task preset templates (NL)
   - 3/8/26: Use server classes for consistency
   - 4/1/2026: Update ui to display information about due dates
+  - 7/6/26: Clamp daysUntilNextDue at 0 so overdue tasks never show negative days
 Preconditions: @react-native-async-storage/async-storage must be installed
 Postconditions: Exports types, helpers, presets, and storage utilities
 Errors: loadLocations returns null on parse failure so callers can fall back to mock data
@@ -62,8 +63,8 @@ export function daysUntilNextDue(task: Task): number {
 
   const remainingMs = nextDueMs - now;
 
-  // Use Math.ceil so that 0.5 days remaining shows as "1 day" 
-  return Math.ceil(remainingMs / msInADay);
+  // Math.ceil so 0.5 days remaining shows as "1 day"; never below 0 for overdue tasks
+  return Math.max(0, Math.ceil(remainingMs / msInADay));
 }
 
 // Pick a color based on the health percentage

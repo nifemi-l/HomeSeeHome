@@ -1,7 +1,7 @@
 /* PROLOGUE
 File name: ViewToggle.tsx
-Description: Unified household header: navy bar with back, divider, 3D/List pill, sensor
-             badges, spacer, avatar and Logout. Fetches sensor data for the household.
+Description: Unified household header: navy bar with back, divider, 3D/List pill, spacer,
+             avatar and Logout.
 Programmer: Nifemi Lawal
 Creation date: 2/6/26
 Revision date:
@@ -9,6 +9,9 @@ Revision date:
   - 4/12/26: Household header bar rework for small screens
   - 4/13/26: Logout cluster matches home web hover (shared theme tokens)
     ---> Web hover on back button (pill + chevron scale/tint)
+  - 7/5/26: Remove sensor badges (no environment sensor); collapse to a single-row layout
+    ---> Fixed-size skeleton and native reads real width immediately, so phones no
+         longer flash the wide logout placeholder while loading
 Preconditions: Must receive the currently active view mode as a prop
 Postconditions: Renders the household chrome bar and can navigate between views
 Errors: None. Will always render successfully
@@ -17,8 +20,9 @@ Invariants: None
 Known faults: None
 */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
+  Animated,
   Modal,
   Platform,
   Pressable,
@@ -27,11 +31,10 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import SkeletonBox from "./SkeletonBox";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { SensorBadge, SensorBadgeProps } from "./SensorBadge";
 import { clearToken, getToken } from "../utils/authStorage";
-import { getRandomMockSensorReading, MOCK_SENSOR_CYCLE_MS } from "../data/sensorData";
 import {
   brand,
   navy,
@@ -41,22 +44,21 @@ import {
   navLogoutWebShellHover,
 } from "../theme/colors";
 
-/** Below this width, sensors move to a second row so the pill and auth cluster fit phones. */
-const STACKED_TOOLBAR_BREAKPOINT = 560;
 /** Below this width, use short segment labels and icon-only logout. */
 const COMPACT_CHROME_BREAKPOINT = 640;
 
-const SENSORS_NA: SensorBadgeProps[] = [
-  { icon: "thermometer", value: "N/A", label: "Temperature" },
-  { icon: "water-percent", value: "N/A", label: "Humidity" },
-];
+// useLayoutEffect so the real width lands before first paint; plain useEffect on the
+// web SSR pass, where useLayoutEffect warns.
+const isWebServer = Platform.OS === "web" && typeof window === "undefined";
+const useMountEffect = isWebServer ? useEffect : useLayoutEffect;
 
 type ViewMode = "3d" | "list";
 
 interface ViewToggleProps {
   active: ViewMode;
   onChange: (mode: ViewMode) => void;
-  householdId: number;
+  /** Show skeleton placeholders while the session check is in flight. */
+  loading?: boolean;
 }
 
 function initialFromToken(token: string): string {
@@ -76,19 +78,49 @@ function initialFromToken(token: string): string {
   }
 }
 
-export default function ViewToggle({ active, onChange, householdId }: ViewToggleProps) {
+export default function ViewToggle({ active, onChange, loading }: ViewToggleProps) {
   const { width: windowWidth } = useWindowDimensions();
-  const stackedToolbarLayout = windowWidth < STACKED_TOOLBAR_BREAKPOINT;
-  const compactChrome = windowWidth < COMPACT_CHROME_BREAKPOINT;
 
-  const [openLabel, setOpenLabel] = useState<string | null>(null);
+  // Web static rendering has no window (width 0), so the first web render assumes the wide
+  // layout to match the server HTML, then picks up the real width on mount. Native has no
+  // server render and uses the real width right away.
+  const [hasMounted, setHasMounted] = useState(false);
+  useMountEffect(() => {
+    setHasMounted(true);
+  }, []);
+  const effectiveWidth =
+    Platform.OS !== "web" || hasMounted ? windowWidth : COMPACT_CHROME_BREAKPOINT + 1;
+  const compactChrome = effectiveWidth < COMPACT_CHROME_BREAKPOINT;
+
+  // Crossfade the real controls in when the skeleton phase ends. The real controls are
+  // always mounted so they, not the skeleton, set the bar's height.
+  const contentOpacity = useRef(new Animated.Value(loading ? 0 : 1)).current;
+  const [skeletonHidden, setSkeletonHidden] = useState(!loading);
+  useEffect(() => {
+    if (!loading) {
+      Animated.timing(contentOpacity, {
+        toValue: 1,
+        duration: 220,
+        // The native driver isn't available on web
+        useNativeDriver: Platform.OS !== "web",
+      }).start();
+      // Timer instead of the animation callback, which doesn't fire reliably on web.
+      const t = setTimeout(() => setSkeletonHidden(true), 240);
+      return () => clearTimeout(t);
+    }
+    contentOpacity.setValue(0);
+    setSkeletonHidden(false);
+  }, [loading, contentOpacity]);
+  const skeletonOpacity = contentOpacity.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0],
+  });
+
   const [avatarLetter, setAvatarLetter] = useState("?");
 
-  const [sensors, setSensors] = useState<SensorBadgeProps[]>(SENSORS_NA);
   const [hoverLogout, setHoverLogout] = useState(false);
   const [hoverBack, setHoverBack] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
-  const lastMockSensorIndex = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,34 +133,6 @@ export default function ViewToggle({ active, onChange, householdId }: ViewToggle
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!householdId) return;
-
-    let isMounted = true;
-    lastMockSensorIndex.current = null;
-
-    function loadMockSensorData() {
-      const next = getRandomMockSensorReading(lastMockSensorIndex.current);
-      lastMockSensorIndex.current = next.index;
-
-      if (!isMounted) return;
-
-      const humidity = next.reading.humidity !== null ? `${next.reading.humidity}%` : "N/A";
-
-      setSensors([
-        { icon: "thermometer", value: `${next.reading.temperature}°C`, label: "Temperature" },
-        { icon: "water-percent", value: humidity, label: "Humidity" },
-      ]);
-    }
-
-    loadMockSensorData();
-    const interval = setInterval(loadMockSensorData, MOCK_SENSOR_CYCLE_MS);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [householdId]);
 
   const navigate = (mode: ViewMode) => {
     if (mode === active) return;
@@ -211,24 +215,6 @@ export default function ViewToggle({ active, onChange, householdId }: ViewToggle
     </View>
   );
 
-  const sensorRow = (
-    <View style={[styles.sensors, stackedToolbarLayout && styles.sensorsStacked]}>
-      {sensors.map((s, index) => (
-        <SensorBadge
-          key={s.label}
-          icon={s.icon}
-          value={s.value}
-          label={s.label}
-          isOpen={openLabel === s.label}
-          onToggle={() => setOpenLabel(openLabel === s.label ? null : s.label!)}
-          darkBg
-          toolbar
-          detailAlign={index === sensors.length - 1 ? "end" : "start"}
-        />
-      ))}
-    </View>
-  );
-
   const userCluster = (
     <Pressable
       onPress={() => setLogoutConfirmOpen(true)}
@@ -268,32 +254,53 @@ export default function ViewToggle({ active, onChange, householdId }: ViewToggle
     </Pressable>
   );
 
+  // Skeleton placeholders. Fixed sizes on purpose - no compactChrome branches. The web build
+  // is statically pre-rendered, so the skeleton paints before any JS runs; width-dependent
+  // sizes would bake the wide variant into the HTML and phones would flash it until hydration.
+  // Sizes are cosmetic anyway since the skeleton is an absolute overlay that adds no layout.
+  const skeletonRow = (
+    <View style={styles.row}>
+      <SkeletonBox width={36} height={36} borderRadius={8} style={{ marginRight: 10 }} />
+      {divider}
+      <View style={styles.pill}>
+        <View style={styles.segment}>
+          <SkeletonBox width={44} height={16} borderRadius={5} />
+        </View>
+        <View style={styles.segment}>
+          <SkeletonBox width={40} height={16} borderRadius={5} />
+        </View>
+      </View>
+      <View style={styles.spacer} />
+      <View style={styles.userClusterPressable}>
+        <View style={styles.avatarCircle}>
+          <SkeletonBox width={32} height={32} borderRadius={16} />
+        </View>
+        <SkeletonBox width={16} height={16} borderRadius={4} />
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.wrapper}>
-      {openLabel && (
-        <Pressable style={styles.backdrop} onPress={() => setOpenLabel(null)} />
-      )}
-
-      {stackedToolbarLayout ? (
-        <>
-          <View style={styles.rowTop}>
-            {backButton}
-            {divider}
-            {pill}
-            <View style={styles.spacer} />
-            {userCluster}
-          </View>
-          <View style={styles.rowBottom}>{sensorRow}</View>
-        </>
-      ) : (
+      {/* Real controls: hidden but mounted during the session check, then faded in. */}
+      <Animated.View
+        style={{ opacity: contentOpacity }}
+        pointerEvents={skeletonHidden ? "auto" : "none"}
+      >
         <View style={styles.row}>
           {backButton}
           {divider}
           {pill}
-          {sensorRow}
           <View style={styles.spacer} />
           {userCluster}
         </View>
+      </Animated.View>
+
+      {/* Skeleton overlay: absolute so it adds no height; fades out as the controls fade in. */}
+      {!skeletonHidden && (
+        <Animated.View pointerEvents="none" style={[styles.skeletonOverlay, { opacity: skeletonOpacity }]}>
+          {skeletonRow}
+        </Animated.View>
       )}
 
       <Modal animationType="fade" transparent visible={logoutConfirmOpen} onRequestClose={() => setLogoutConfirmOpen(false)}>
@@ -328,6 +335,17 @@ export default function ViewToggle({ active, onChange, householdId }: ViewToggle
 }
 
 const styles = StyleSheet.create({
+  // Matches the wrapper's padding so the placeholders sit over the real controls.
+  skeletonOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    justifyContent: "center",
+  },
   wrapper: {
     backgroundColor: navy,
     paddingVertical: 10,
@@ -341,43 +359,11 @@ const styles = StyleSheet.create({
     width: "100%",
     alignSelf: "stretch",
   },
-  backdrop: {
-    ...Platform.select({
-      web: {
-        position: "fixed" as const,
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-      },
-      default: {
-        position: "absolute" as const,
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-      },
-    }),
-    zIndex: 0,
-  },
   row: {
     flexDirection: "row",
     alignItems: "center",
     zIndex: 1,
     minWidth: 0,
-  },
-  rowTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    zIndex: 1,
-    marginBottom: 8,
-    minWidth: 0,
-  },
-  rowBottom: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    alignItems: "center",
-    zIndex: 1,
   },
   backBtn: {
     width: 36,
@@ -435,17 +421,6 @@ const styles = StyleSheet.create({
   },
   segmentTextActive: {
     color: "#fff",
-  },
-  sensors: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginLeft: 10,
-    gap: 8,
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  sensorsStacked: {
-    marginLeft: 0,
   },
   spacer: {
     flex: 1,

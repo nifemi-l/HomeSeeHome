@@ -225,8 +225,13 @@ export class Renderer {
     }
   }
 
-  // Called when a GL context is created - NOT at construction time. 
+  // Called when a GL context is created - NOT at construction time.
   async init(gl: ExpoWebGLRenderingContext) {
+    // Mark not-ready first: a render loop from a previous context may still be alive, and
+    // it must fail checkReadyToDraw() while we tear down and rebuild state below (otherwise
+    // it can draw against a half-initialized renderer, e.g. a MeshManager with no models)
+    this.initialized = false;
+
     // Setup our graphical VAO manager
     this.vaoManager = new VAOManager(gl);
 
@@ -593,6 +598,12 @@ export class Renderer {
     // Ensure we have a proper house billboard vertex array object (VAO), if not error and return
     if (!this.house.bbVao) {
       console.warn("Invalid billboard VAO.");
+      return false;
+    }
+
+    // Ensure the mesh manager exists and has finished loading its models, if not return.
+    // No warning here - this is a normal transient state while models are still loading
+    if (!this.meshManager || !this.meshManager.valid) {
       return false;
     }
 

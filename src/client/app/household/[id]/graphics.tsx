@@ -20,6 +20,11 @@ Revision date:
   - 4/16/26: Add 3D scale, rotation database support
   - 4/18/26: Highlight selected task and health bar
   - 4/20/26: Add inventory bar to manage adding features to the graphical view
+  - 7/6/26: Edit panel buttons wrap to their natural width instead of being squeezed into
+            equal-width columns, so labels never truncate (long labels stack onto their own
+            row on narrow screens instead). Tasks section redesigned with a status dot,
+            due-in count colored via the real healthPercent(), and a selected-task checkmark.
+            Hover name tag for features under the cursor.
 Preconditions: A React application asking for the home page
 Postconditions: A home page component ready for rendering
 Errors: The home page will always be delivered successfully. 
@@ -33,19 +38,22 @@ Known faults: None
 // ***********************************************************
 
 // Prevents URL changing to bypass login.
-import { AuthLoadingScreen, useAuthGuard } from "../../../utils/useAuthGuard";
+import { useAuthGuard } from "../../../utils/useAuthGuard";
+
+// Shared staged-loading overlay (session check -> fetch -> renderer prep)
+import LoadingOverlay from "../../../components/LoadingOverlay";
 
 // Import required components
 import React, { useEffect, useState, useSyncExternalStore, useRef, Fragment } from 'react';
 import { ExpoWebGLRenderingContext, GLView } from 'expo-gl';
-import { ActivityIndicator, LayoutChangeEvent, Platform, Pressable, View, useWindowDimensions } from "react-native";
+import { LayoutChangeEvent, Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Text } from "expo-router/react-navigation";
-import { Button, PaperProvider, Card, Menu, TextInput, Dialog, Portal } from 'react-native-paper';
+import { Button, PaperProvider, Card, TextInput, Dialog, Portal } from 'react-native-paper';
 import { useLocalSearchParams } from "expo-router";
 import { appPaperLightTheme } from "../../../theme/paperTheme";
-import { listBrand } from "../../../theme/colors";
+import { listBrand, listSelection } from "../../../theme/colors";
 import tinycolor from "tinycolor2";
 
 // Import graphics utilities
@@ -54,6 +62,9 @@ import {
   RenderPass,getPixelFromRaw, getPickedObjectFromPointOnScreen,
   setPixelFrustrum, InventoryProps, EditMenuProps
 } from "../../../data/graphicsUtils"
+
+// Import due-date and health helpers
+import { daysUntilNextDue, healthColor, healthPercent } from "../../../data/householdUtils";
 
 // Import renderer classes
 import {
@@ -158,9 +169,60 @@ function getSelectedPlaceFeature() {
   return rdr.selectedPlaceFeature;
 }
 
+// Name of the feature under the cursor plus the cursor position, for the hover name tag.
+// The name comes from the renderer's per-frame pick pass; the position from mousemove.
+let hoveredFeatureName: string | null = null;
+let hoverScreenX = 0;
+let hoverScreenY = 0;
+
+function notifyHoverListeners() {
+  reactListeners.forEach((cb) => cb(hoveredFeatureName));
+}
+
+// called from the draw loop with the current pick result
+function setHoveredFeatureName(name: string | null) {
+  if (name !== hoveredFeatureName) {
+    hoveredFeatureName = name;
+    notifyHoverListeners();
+  }
+}
+
 // clear out selected place feature
 function clearSelectedPlaceFeature() {
   setSelectedPlaceFeature(null);
+}
+
+// Track whether the renderer has drawn its first frame. Between the feature fetch finishing
+// and that first frame, the GL context is compiling shaders and loading models, so the UI
+// shows a "preparing" overlay until this flips true (see SceneLoadingOverlay).
+let sceneFirstFrameDrawn = false;
+
+// setter for the first-frame flag so listeners are all notified on update
+function setSceneFirstFrameDrawn(val: boolean) {
+  sceneFirstFrameDrawn = val;
+  reactListeners.forEach((cb) => cb(sceneFirstFrameDrawn));
+}
+
+// getter for listeners
+function getSceneFirstFrameDrawn() {
+  return sceneFirstFrameDrawn;
+}
+
+// Which phase of the load this screen is in, for the loading overlay's status text.
+// "empty" means the fetch succeeded but returned no features - there is no 3D scene
+// coming, so the overlay treats that as done and never shows the "preparing" label.
+type LoadingStage = "fetching" | "preparing" | "empty";
+let loadingStage: LoadingStage = "fetching";
+
+// setter for the loading stage so listeners are all notified on update
+function setLoadingStage(stage: LoadingStage) {
+  loadingStage = stage;
+  reactListeners.forEach((cb) => cb(loadingStage));
+}
+
+// getter for listeners
+function getLoadingStage() {
+  return loadingStage;
 }
 
 // ***********************************************************
@@ -324,6 +386,54 @@ function Inventory(props: InventoryProps) {
       ) : null);
 }
 
+// Small label that follows the cursor and names the feature under it (web hover only)
+function HoverNameTag() {
+  const [tag, setTag] = useState<{ name: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    return subListener(() => {
+      setTag(
+        hoveredFeatureName
+          ? { name: hoveredFeatureName, x: hoverScreenX, y: hoverScreenY }
+          : null
+      );
+    });
+  }, []);
+
+  if (Platform.OS !== "web" || !tag) return null;
+
+  // Mouse coords are window-relative; the canvas container sits below the toolbar
+  const toolbarHeight = windowHeight - viewHeight;
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        left: tag.x + 14,
+        top: tag.y - toolbarHeight + 14,
+        backgroundColor: "rgba(20,30,45,0.9)",
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        zIndex: 12,
+      }}
+    >
+      <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "600" }}>{tag.name}</Text>
+    </View>
+  );
+}
+
+// Dialog card styling shared by the delete and interval prompts; matches the list view's
+// delete dialog so popups look the same across both views
+const dialogCardStyle = {
+  borderRadius: 16,
+  maxWidth: 400,
+  width: "92%",
+  alignSelf: "center",
+} as const;
+const dialogTitleStyle = { fontSize: 18, fontWeight: "700" } as const;
+const dialogBodyStyle = { lineHeight: 22 } as const;
+
 // A window that will appear to edit feature info
 function EditWindow(props: EditMenuProps) {
   // if in edit mode or not
@@ -333,6 +443,10 @@ function EditWindow(props: EditMenuProps) {
   const selectedFeature = useSyncExternalStore(subListener, getSelectedEditFeature); // will be updated by GL, triggers a re-render on change
   // Set the chore selected for our feature
   const [selectedChore, setSelectedChore] = useState(0);
+  // Expansion state for the three panel sections
+  const [showTransform, setShowTransform] = useState(false);
+  const [showActions, setShowActions] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
   // Store: Are we changing the interval yet?
   const [showIntervalMenu, setShowIntervalMenu] = useState(false);
   // The frequency update value we want to store for updates
@@ -366,8 +480,11 @@ function EditWindow(props: EditMenuProps) {
 
   // When selectedFeature changes, we want to update selectedChore as rdr.selectedEditTask may have changed
   useEffect(() => {
-    // Just reset to a clean state
+    // Reset to a clean state when feature selection changes
     setSelectedChore(0);
+    setShowTransform(false);
+    setShowActions(false);
+    setShowTasks(false);
   }, [selectedFeature])
 
   return (
@@ -455,118 +572,196 @@ function EditWindow(props: EditMenuProps) {
         {isEditing && selectedFeature !== null ? (
           <Card
             mode='contained'
+            style={{ maxWidth: panelMaxWidth }}
           >
-            <Card.Title title={selectedFeature.feature_name}/>
-            <Card.Actions>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_X)}}>
-                <View style={{transform: [{rotate: `${xAxisAngle}rad`}]}}>
-                  <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                </View>
+            <Card.Title title={selectedFeature.feature_name} style={{ paddingBottom: 8 }} />
+
+            {/* Three toggle buttons for the main sections. Sized to their natural content
+                (no forced flex ratios) and wrapped, so a long label never gets squeezed
+                into an equal share of the row and truncated - on a narrow screen they
+                simply stack onto their own lines instead. */}
+            <Card.Actions style={{ flexWrap: "wrap", rowGap: 8, columnGap: 6, paddingHorizontal: 8 }}>
+              <Button
+                mode={showTransform ? "contained" : "outlined"}
+                buttonColor={showTransform ? listBrand : undefined}
+                textColor={showTransform ? "#FFFFFF" : listBrand}
+                icon={showTransform ? "chevron-up" : "cursor-move"}
+                onPress={() => setShowTransform(!showTransform)}
+              >
+                Move & resize
               </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_X)}}>
-                <View style={{transform: [{rotate: `${xAxisAngle + Math.PI}rad`}]}}>
-                  <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                </View>
+              <Button
+                mode={showActions ? "contained" : "outlined"}
+                buttonColor={showActions ? listBrand : undefined}
+                textColor={showActions ? "#FFFFFF" : listBrand}
+                icon={showActions ? "chevron-up" : "dots-vertical"}
+                onPress={() => setShowActions(!showActions)}
+              >
+                Actions
               </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_Z)}}>
-                <View style={{transform: [{rotate: `${xAxisAngle + Math.PI / 2}rad`}]}}>
-                  <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                </View>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_Z)}}>
-                <View style={{transform: [{rotate: `${xAxisAngle + 3 * Math.PI / 2}rad`}]}}>
-                  <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF"/>
-                </View>
-              </Button>
-            </Card.Actions>
-            <Card.Actions>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.rotateSelectedFeatureY(-15)}}>
-                <MaterialCommunityIcons name="axis-z-rotate-clockwise" size={18} color="#FFFFFF"/>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.rotateSelectedFeatureY(15)}}>
-                <MaterialCommunityIcons name="axis-z-rotate-counterclockwise" size={18} color="#FFFFFF"/>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.scaleSelectedFeature(0.25)}}>
-                <MaterialCommunityIcons name="plus" size={18} color="#FFFFFF"/>
-              </Button>
-              <Button mode="contained" buttonColor={listBrand} textColor="#FFFFFF" onPress={() => {rdr.house.scaleSelectedFeature(-0.25)}}>
-                <MaterialCommunityIcons name="minus" size={18} color="#FFFFFF"/>
+              <Button
+                mode={showTasks ? "contained" : "outlined"}
+                buttonColor={showTasks ? listBrand : undefined}
+                textColor={showTasks ? "#FFFFFF" : listBrand}
+                icon={showTasks ? "chevron-up" : "format-list-bulleted"}
+                onPress={() => setShowTasks(!showTasks)}
+              >
+                Tasks
               </Button>
             </Card.Actions>
-            {/* Display chore cycle button if needed */}
-            {selectedFeature.tasks.length > 1 && selectedChore < selectedFeature.tasks.length ? (
-              <Card.Actions style={{justifyContent:"center"}}>
-                <Button onPress={() => {
-                  const taskIndex = (selectedChore + 1) % selectedFeature.tasks.length;
-                  setSelectedChore(taskIndex);
-                }}>Cycle chore: {
-                  selectedFeature.tasks[selectedChore].task_name === INVALID_TASK_NAME ? 
-                    "Unnamed " + selectedChore :
-                    selectedFeature.tasks[selectedChore].task_name
-                }</Button>
+
+            {/* Move & resize: icon-only buttons (no label to truncate), wrapped so they
+                reflow to fewer per row on a narrow screen instead of overflowing. */}
+            {showTransform && (
+              <Card.Actions style={{ flexWrap: "wrap", gap: 6, paddingHorizontal: 8 }}>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_X)}} style={{ minWidth: 44 }} compact>
+                  <View style={{transform: [{rotate: `${xAxisAngle}rad`}]}}>
+                    <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
+                  </View>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_X)}} style={{ minWidth: 44 }} compact>
+                  <View style={{transform: [{rotate: `${xAxisAngle + Math.PI}rad`}]}}>
+                    <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
+                  </View>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_Z)}} style={{ minWidth: 44 }} compact>
+                  <View style={{transform: [{rotate: `${xAxisAngle + Math.PI / 2}rad`}]}}>
+                    <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
+                  </View>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_Z)}} style={{ minWidth: 44 }} compact>
+                  <View style={{transform: [{rotate: `${xAxisAngle + 3 * Math.PI / 2}rad`}]}}>
+                    <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
+                  </View>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.rotateSelectedFeatureY(-15)}} style={{ minWidth: 44 }} compact>
+                  <MaterialCommunityIcons name="axis-z-rotate-clockwise" size={16} color="#FFFFFF"/>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.rotateSelectedFeatureY(15)}} style={{ minWidth: 44 }} compact>
+                  <MaterialCommunityIcons name="axis-z-rotate-counterclockwise" size={16} color="#FFFFFF"/>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.scaleSelectedFeature(0.25)}} style={{ minWidth: 44 }} compact>
+                  <MaterialCommunityIcons name="plus" size={16} color="#FFFFFF"/>
+                </Button>
+                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.scaleSelectedFeature(-0.25)}} style={{ minWidth: 44 }} compact>
+                  <MaterialCommunityIcons name="minus" size={16} color="#FFFFFF"/>
+                </Button>
               </Card.Actions>
-            ) : null}
-            {/* Display chore related functionality if needed */}
-            {selectedFeature.tasks.length > 0 ? (
-              <Card.Actions>
-                  {/* The menu for updating intervals */}
-                  <Menu
-                    visible={isEditing && selectedFeature !== null && showIntervalMenu}
-                    onDismiss={() => {setShowIntervalMenu(false); setNewFrequency("0")}}
-                    anchor={<Button onPress={() => {setShowIntervalMenu(true)}}>Set interval</Button>}
-                  >
-                    <TextInput label="The interval in whole days..." mode="outlined" value={newFrequency} keyboardType='numeric'
-                      onChangeText={(t) => {
-                        // Convert our input to a number, check if it is not a number, then apply changes if we have valid input
-                        // They must be a number, an integer (we round), and >= 1
-                        const fixed = Number(t);
-                        if (!Number.isNaN(fixed) && fixed >= 1) {
-                          selectedFeature.tasks[selectedChore].changeFrequency(Math.round(fixed))} // we round to the nearest integer
-                          setNewFrequency(t);
-                        }
-                      }>
-                    </TextInput>
-                  </Menu>
-                  <Button onPress={() => {selectedFeature.tasks[selectedChore].finishTask();}}>Mark complete!</Button>
-                </Card.Actions>
-            ) : null}
-            {/* Two distinct, deliberate actions - separated from the controls above so
-                neither is ever an accidental tap:
-                  - Send to dock: quick, reversible, for repositioning. No confirmation
-                    needed since nothing is lost. Just waits in the dock to be placed again.
-                  - Delete feature: permanent (removes the feature and its tasks), so it
-                    requires confirmation first. */}
-            <Card.Actions style={{ flexWrap: "wrap" }}>
-              <Button
-                mode="outlined"
-                textColor={listBrand}
-                onPress={() => {
-                  rdr.removeFeature(selectedFeature.id);
-                  setSelectedEditFeature(null);
-                }}
-              >
-                <MaterialCommunityIcons name="tray-arrow-down" size={18} color={listBrand} />
-                {"  Send to dock"}
-              </Button>
-              <Button
-                mode="outlined"
-                textColor="#D9534F"
-                onPress={() => setShowDeleteConfirm(true)}
-              >
-                <MaterialCommunityIcons name="trash-can-outline" size={18} color="#D9534F" />
-                {"  Delete feature"}
-              </Button>
-            </Card.Actions>
+            )}
+
+            {/* Actions: full labels, natural width, wrapped rather than forced into a grid */}
+            {showActions && (
+              <Card.Actions style={{ flexWrap: "wrap", rowGap: 8, columnGap: 6, paddingHorizontal: 8 }}>
+                <Button
+                  mode="outlined"
+                  textColor={listBrand}
+                  onPress={() => {
+                    setNewFrequency(String(selectedFeature.tasks[selectedChore].frequency_days));
+                    setShowIntervalMenu(true);
+                  }}
+                  icon="clock-outline"
+                >
+                  Set interval
+                </Button>
+                <Button
+                  mode="contained"
+                  buttonColor="#4caf50"
+                  textColor="#FFFFFF"
+                  onPress={() => {
+                    selectedFeature.tasks[selectedChore].finishTask();
+                  }}
+                  icon="check-circle"
+                >
+                  Mark complete
+                </Button>
+                <Button
+                  mode="outlined"
+                  textColor={listBrand}
+                  onPress={() => {
+                    rdr.removeFeature(selectedFeature.id);
+                    setSelectedEditFeature(null);
+                  }}
+                  icon="tray-arrow-down"
+                >
+                  Send to dock
+                </Button>
+                <Button
+                  mode="outlined"
+                  textColor="#D9534F"
+                  onPress={() => {
+                    setShowDeleteConfirm(true);
+                  }}
+                  icon="trash-can-outline"
+                >
+                  Delete feature
+                </Button>
+              </Card.Actions>
+            )}
+
+            {/* Tasks: tap one to make it the target of the Actions above (interval/complete) */}
+            {showTasks && selectedFeature.tasks.length > 0 && (
+              <Card.Actions style={{ flexDirection: "column", alignItems: "stretch", gap: 6, paddingHorizontal: 8, paddingBottom: 10 }}>
+                <Text style={{ fontSize: 11, color: "#8A94A3", marginBottom: 2 }}>
+                  Tap a task to select it for Actions
+                </Text>
+                {selectedFeature.tasks.map((task, idx) => {
+                  const daysLeft = daysUntilNextDue(task);
+                  const color = healthColor(healthPercent(task));
+                  const isSelected = selectedChore === idx;
+                  return (
+                    <Pressable
+                      key={task.id}
+                      onPress={() => setSelectedChore(idx)}
+                      style={({ pressed, hovered }) => [
+                        {
+                          flexDirection: "row",
+                          alignItems: "center",
+                          paddingVertical: 8,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: isSelected ? listSelection : (Platform.OS === "web" && hovered ? "#F2F4F7" : "#FFFFFF"),
+                          borderWidth: isSelected ? 2 : 1,
+                          borderColor: isSelected ? listBrand : "#E2E5EA",
+                        },
+                        pressed && { opacity: 0.75 },
+                      ]}
+                    >
+                      {/* Status dot - same green/yellow/red scale as the list view's health bar */}
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color, marginRight: 10 }} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ color: isSelected ? listBrand : "#242C38", fontWeight: isSelected ? "700" : "600", fontSize: 14 }}>
+                          {task.task_name === INVALID_TASK_NAME ? `Unnamed ${idx}` : task.task_name}
+                        </Text>
+                        <Text style={{ color: "#8A94A3", fontSize: 11, marginTop: 1 }}>
+                          Every {task.frequency_days} {task.frequency_days === 1 ? "day" : "days"}
+                        </Text>
+                      </View>
+                      <Text style={{ color, fontWeight: "700", fontSize: 13, marginLeft: 8 }}>
+                        {daysLeft} {daysLeft === 1 ? "day" : "days"}
+                      </Text>
+                      {isSelected && (
+                        <MaterialCommunityIcons name="check-circle" size={16} color={listBrand} style={{ marginLeft: 8 }} />
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </Card.Actions>
+            )}
           </Card>
         ) : isEditing && !selectedFeature ? (
           <Text style={{color: "red"}}>Select a feature to edit</Text>
         ) : null }
 
         <Portal>
-          <Dialog visible={showDeleteConfirm} onDismiss={() => setShowDeleteConfirm(false)}>
-            <Dialog.Title>Delete feature?</Dialog.Title>
+          {/* Compact card, same shape as the list view's delete prompt */}
+          <Dialog
+            visible={showDeleteConfirm}
+            onDismiss={() => setShowDeleteConfirm(false)}
+            style={dialogCardStyle}
+          >
+            <Dialog.Title style={dialogTitleStyle}>Delete feature?</Dialog.Title>
             <Dialog.Content>
-              <Text>
+              <Text style={dialogBodyStyle}>
                 {selectedFeature ? `"${selectedFeature.name}"` : "This feature"} and all of its tasks will be permanently deleted. This cannot be undone.
               </Text>
             </Dialog.Content>
@@ -574,7 +769,7 @@ function EditWindow(props: EditMenuProps) {
               <Button mode="text" onPress={() => setShowDeleteConfirm(false)}>Cancel</Button>
               <Button
                 mode="contained"
-                buttonColor="#D9534F"
+                buttonColor="#c62828"
                 textColor="#FFFFFF"
                 onPress={() => {
                   if (selectedFeature) {
@@ -588,6 +783,47 @@ function EditWindow(props: EditMenuProps) {
               </Button>
             </Dialog.Actions>
           </Dialog>
+
+          {/* Interval editor: saves once on Save, not on every keystroke */}
+          <Dialog
+            visible={showIntervalMenu && selectedFeature !== null}
+            onDismiss={() => setShowIntervalMenu(false)}
+            style={dialogCardStyle}
+          >
+            <Dialog.Title style={dialogTitleStyle}>Set interval</Dialog.Title>
+            <Dialog.Content style={{ gap: 12 }}>
+              <Text style={dialogBodyStyle}>
+                How many days between completions of{" "}
+                {selectedFeature && selectedFeature.tasks[selectedChore]
+                  ? `"${selectedFeature.tasks[selectedChore].task_name}"`
+                  : "this chore"}?
+              </Text>
+              <TextInput
+                label="Days"
+                mode="outlined"
+                value={newFrequency}
+                keyboardType="numeric"
+                onChangeText={setNewFrequency}
+              />
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button mode="text" onPress={() => setShowIntervalMenu(false)}>Cancel</Button>
+              <Button
+                mode="contained"
+                buttonColor={listBrand}
+                textColor="#FFFFFF"
+                disabled={Number.isNaN(Number(newFrequency)) || Number(newFrequency) < 1}
+                onPress={() => {
+                  if (selectedFeature && selectedFeature.tasks[selectedChore]) {
+                    selectedFeature.tasks[selectedChore].changeFrequency(Math.round(Number(newFrequency)));
+                  }
+                  setShowIntervalMenu(false);
+                }}
+              >
+                Save
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
         </Portal>
     </View>
   );
@@ -598,12 +834,30 @@ function EditWindow(props: EditMenuProps) {
 // the page. Also uses a container to grab user gestures (e.g. rotating on the screen or panning or screen taps (clicks))
 export default function Index() {
   const { isCheckingAuth, isAuthenticated } = useAuthGuard();
+  const checkingSession = isCheckingAuth || !isAuthenticated;
 
-  if (isCheckingAuth || !isAuthenticated) {
-    return <AuthLoadingScreen />;
-  }
+  // One overlay instance spans the session check AND everything after it (data fetch,
+  // renderer prep), so the user sees a single continuous spinner whose status text
+  // transitions in place - never a second, different-looking loader.
+  const sceneReady = useSyncExternalStore(subListener, getSceneFirstFrameDrawn);
+  const stage = useSyncExternalStore(subListener, getLoadingStage);
+  const loadingDone = !checkingSession && (sceneReady || stage === "empty");
+  const loadingText = checkingSession
+    ? "Checking your session..."
+    : stage === "preparing"
+      ? "Preparing your 3D home..."
+      : "Fetching household data...";
 
-  return <AuthenticatedGraphicsScreen />;
+  return (
+    <View style={{ flex: 1 }}>
+      {checkingSession ? (
+        <View style={{ flex: 1, backgroundColor: "#F0F2F5" }} />
+      ) : (
+        <AuthenticatedGraphicsScreen />
+      )}
+      <LoadingOverlay done={loadingDone} text={loadingText} />
+    </View>
+  );
 }
 
 function AuthenticatedGraphicsScreen() {
@@ -638,6 +892,13 @@ function AuthenticatedGraphicsScreen() {
 
       const pixelCoords = getPixelFromRaw(rdrRef.current.glRef, event.clientX, event.clientY, viewWidth, viewHeight, windowHeight); // convert mouse position to coordinates in the GL drawing buffer
       setPixelFrustrum(rdrRef.current.glRef, rdr.cam.pixelPickFrustrum, FOV_RADIANS, NEAR_CLIP, FAR_CLIP, pixelCoords.pixelX, pixelCoords.pixelY);
+
+      // Keep the hover name tag glued to the cursor while a feature is hovered
+      hoverScreenX = event.clientX;
+      hoverScreenY = event.clientY;
+      if (hoveredFeatureName) {
+        notifyHoverListeners();
+      }
     }
 
     // Register the mouse move listner
@@ -756,6 +1017,9 @@ function AuthenticatedGraphicsScreen() {
   // Reload the features of our housewhenever the household ID changes.
   // Also mostly from list.tsx (thanks again Nifemi)
   useEffect(() => {
+    // Starting (or restarting) the load - reflect that in the overlay's status text
+    setLoadingStage("fetching");
+
     // Get household room data
     fetchHouseholdRooms(householdId)
       .then((roomsData) => {
@@ -808,6 +1072,10 @@ function AuthenticatedGraphicsScreen() {
               if (mapped.length > 0) {
                 setEmptyFeatures(false);
               }
+
+              // Advance the overlay: renderer prep comes next, unless there's nothing to
+              // render - then the load is simply over and the "preparing" label never shows
+              setLoadingStage(mapped.length > 0 ? "preparing" : "empty");
             })
       .catch((e) => {
         console.error("Failed to fetch features for household", householdId, e);
@@ -821,6 +1089,9 @@ function AuthenticatedGraphicsScreen() {
         cancelAnimationFrame(rdrRef.current.frameId);
         rdrRef.current.frameId = null;
       }
+      // Reset so the loading overlay starts from a clean state if the user navigates back
+      setSceneFirstFrameDrawn(false);
+      setLoadingStage("fetching");
     }
   }, []);
 
@@ -840,7 +1111,8 @@ function AuthenticatedGraphicsScreen() {
   const ROOM_CHEVRON_COLOR_HOVER = !ROOM_ACCENT_COLOR ? "#5EFF9A" : tinycolor(ROOM_ACCENT_COLOR).brighten(10).toHexString();
 
   return (
-    featureFetchSuccess && !emptyFeatures ? (
+    <View style={{ flex: 1 }}>
+    {featureFetchSuccess && !emptyFeatures ? (
       <Fragment>
         <PaperProvider theme={appPaperLightTheme}>
         <View
@@ -955,7 +1227,8 @@ function AuthenticatedGraphicsScreen() {
           </View>
 
           <EditWindow tool={currentTool} updateToolCallback={setCurrentTool}/>
-          <Inventory tool={currentTool}/> 
+          <Inventory tool={currentTool}/>
+          <HoverNameTag />
         </View>
       </PaperProvider>
     </Fragment>
@@ -967,14 +1240,11 @@ function AuthenticatedGraphicsScreen() {
         </Text>
       </View>
     ) : (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        {/* Display a loading bar while we wait to fetch features */}
-        <ActivityIndicator size="large" />
-        <Text style={{fontSize: 16, color: "#5B6B7F", fontWeight: "600"}}>
-          Fetching household data...
-        </Text>
-      </View>
-    )
+      // Pre-fetch placeholder. The overlay rendered by Index covers this; it just keeps
+      // the background matched to the overlay so there's nothing to see behind the fade
+      <View style={{ flex: 1, backgroundColor: "#F0F2F5" }} />
+    )}
+    </View>
   );
 }
 
@@ -985,8 +1255,21 @@ function AuthenticatedGraphicsScreen() {
 // This is the function called to create the WebGL context, setup extensions if needed, read and compile shaders, and do all
 // other prep work which is neccessary to initialize our renderer. 
 async function onContextCreate(gl: ExpoWebGLRenderingContext) {
+  // A fresh context means nothing has been drawn yet - keep the preparing overlay up
+  setSceneFirstFrameDrawn(false);
+
+  // Kill any loop still running against an old context. The unmount cleanup normally
+  // handles this, but it can't catch a loop whose init() only resolved after unmount
+  stopRenderLoop();
+
   // Initialize the renderer and WebGL context
   await rdr.init(gl);
+
+  // If another context superseded this one while init was awaiting, don't start a
+  // competing render loop for the stale context
+  if (rdr.glRef !== gl) {
+    return;
+  }
 
   // Setup callback functions so that we can update the UI from the renderer later
   rdr.setUnplacedFeatureCallback(setUnplacedFeatures);
@@ -994,6 +1277,14 @@ async function onContextCreate(gl: ExpoWebGLRenderingContext) {
 
   // Start drawing frames. This is a recursive animation function
   drawFrame(rdr.lastFrameTime);
+}
+
+// Cancel the active render loop, if any
+function stopRenderLoop() {
+  if (rdr.frameId !== null) {
+    cancelAnimationFrame(rdr.frameId);
+    rdr.frameId = null;
+  }
 }
 
 // ***********************************************************
@@ -1026,6 +1317,11 @@ function drawFrame(time: number) {
     renderScene(delta);
     rdr.setHighlightedFeature(getPickedObjectFromPointOnScreen(rdr.glRef));
 
+    // Resolve the hovered feature's name for the cursor tag
+    const hoveredId = rdr.highlightedFeatureID;
+    const hovered = hoveredId ? rdr.house.renderableFeatures.find((f) => f.id === hoveredId) : undefined;
+    setHoveredFeatureName(hovered ? hovered.feature_name : null);
+
     // Call the render method to actually draw all objects
     // For the cube draw calls, we need to switch to the correct vertex attribute and buffer configuration. 
     // This also updates our view matrix so we can rotate the world around
@@ -1034,6 +1330,12 @@ function drawFrame(time: number) {
   
     // End frame and then request a new animation frame with this same method (recursive)
     rdr.glRef.endFrameEXP();
+
+    // The first completed frame means the scene is on screen - fade out the preparing overlay
+    if (!getSceneFirstFrameDrawn()) {
+      setSceneFirstFrameDrawn(true);
+    }
+
     rdr.frameId = window.requestAnimationFrame(drawFrame);
 }
 
