@@ -64,7 +64,7 @@ import {
 } from "../../../data/graphicsUtils"
 
 // Import due-date and health helpers
-import { daysUntilNextDue, healthColor, healthPercent } from "../../../data/householdUtils";
+import { getDueBadge, healthColor, healthPercent } from "../../../data/householdUtils";
 
 // Import renderer classes
 import {
@@ -434,6 +434,97 @@ const dialogCardStyle = {
 const dialogTitleStyle = { fontSize: 18, fontWeight: "700" } as const;
 const dialogBodyStyle = { lineHeight: 22 } as const;
 
+// Compact pill toggle for the edit panel's section row (Paper buttons are too bulky here)
+function SectionToggle({ label, icon, active, onPress }: {
+  label: string;
+  icon: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed, hovered }) => [
+        {
+          flexDirection: "row",
+          alignItems: "center",
+          paddingVertical: 5,
+          paddingHorizontal: 10,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: active ? listBrand : "#C9D4E4",
+          backgroundColor: active ? listBrand : "#FFFFFF",
+        },
+        Platform.OS === "web" && hovered && !active && { backgroundColor: "#F2F6FC" },
+        pressed && { opacity: 0.85 },
+      ]}
+    >
+      <MaterialCommunityIcons name={icon as any} size={14} color={active ? "#FFFFFF" : listBrand} />
+      <Text style={{ marginLeft: 5, fontSize: 13, fontWeight: "600", color: active ? "#FFFFFF" : listBrand }}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+// Fixed-size icon button for the move/resize grid
+function PanelIconButton({ onPress, children }: { onPress: () => void; children: React.ReactNode }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed, hovered }) => [
+        {
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: listBrand,
+        },
+        Platform.OS === "web" && hovered && { backgroundColor: "#2A6BC8" },
+        pressed && { opacity: 0.8 },
+      ]}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
+// Uniform action button; "success" is filled green, "danger" stays clearly red
+function ActionChip({ label, icon, onPress, kind = "default" }: {
+  label: string;
+  icon: string;
+  onPress: () => void;
+  kind?: "default" | "success" | "danger";
+}) {
+  const text = kind === "success" ? "#FFFFFF" : kind === "danger" ? "#C62828" : listBrand;
+  const border = kind === "success" ? "#4caf50" : kind === "danger" ? "#E5B9B7" : "#C9D4E4";
+  const bg = kind === "success" ? "#4caf50" : "#FFFFFF";
+  const hoverBg = kind === "success" ? "#43a047" : kind === "danger" ? "#FDF3F2" : "#F2F6FC";
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed, hovered }) => [
+        {
+          flexDirection: "row",
+          alignItems: "center",
+          paddingVertical: 6,
+          paddingHorizontal: 10,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: border,
+          backgroundColor: bg,
+        },
+        Platform.OS === "web" && hovered && { backgroundColor: hoverBg },
+        pressed && { opacity: 0.85 },
+      ]}
+    >
+      <MaterialCommunityIcons name={icon as any} size={14} color={text} />
+      <Text style={{ marginLeft: 5, fontSize: 13, fontWeight: "600", color: text }}>{label}</Text>
+    </Pressable>
+  );
+}
+
 // A window that will appear to edit feature info
 function EditWindow(props: EditMenuProps) {
   // if in edit mode or not
@@ -572,140 +663,118 @@ function EditWindow(props: EditMenuProps) {
         {isEditing && selectedFeature !== null ? (
           <Card
             mode='contained'
-            style={{ maxWidth: panelMaxWidth }}
+            style={{ maxWidth: panelMaxWidth, borderRadius: 12, paddingBottom: 12 }}
           >
-            <Card.Title title={selectedFeature.feature_name} style={{ paddingBottom: 8 }} />
+            <View style={{ paddingHorizontal: 12, paddingTop: 10 }}>
+              <Text style={{ fontSize: 15, fontWeight: "700", color: "#242C38" }}>
+                {selectedFeature.feature_name}
+              </Text>
+            </View>
 
-            {/* Three toggle buttons for the main sections. Sized to their natural content
-                (no forced flex ratios) and wrapped, so a long label never gets squeezed
-                into an equal share of the row and truncated - on a narrow screen they
-                simply stack onto their own lines instead. */}
-            <Card.Actions style={{ flexWrap: "wrap", rowGap: 8, columnGap: 6, paddingHorizontal: 8 }}>
-              <Button
-                mode={showTransform ? "contained" : "outlined"}
-                buttonColor={showTransform ? listBrand : undefined}
-                textColor={showTransform ? "#FFFFFF" : listBrand}
-                icon={showTransform ? "chevron-up" : "cursor-move"}
+            {/* Section toggles in one compact row; wraps only if the screen is too narrow */}
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 12, paddingTop: 8 }}>
+              <SectionToggle
+                label="Move & resize"
+                icon="cursor-move"
+                active={showTransform}
                 onPress={() => setShowTransform(!showTransform)}
-              >
-                Move & resize
-              </Button>
-              <Button
-                mode={showActions ? "contained" : "outlined"}
-                buttonColor={showActions ? listBrand : undefined}
-                textColor={showActions ? "#FFFFFF" : listBrand}
-                icon={showActions ? "chevron-up" : "dots-vertical"}
+              />
+              <SectionToggle
+                label="Actions"
+                icon="dots-vertical"
+                active={showActions}
                 onPress={() => setShowActions(!showActions)}
-              >
-                Actions
-              </Button>
-              <Button
-                mode={showTasks ? "contained" : "outlined"}
-                buttonColor={showTasks ? listBrand : undefined}
-                textColor={showTasks ? "#FFFFFF" : listBrand}
-                icon={showTasks ? "chevron-up" : "format-list-bulleted"}
+              />
+              <SectionToggle
+                label="Tasks"
+                icon="format-list-bulleted"
+                active={showTasks}
                 onPress={() => setShowTasks(!showTasks)}
-              >
-                Tasks
-              </Button>
-            </Card.Actions>
+              />
+            </View>
 
-            {/* Move & resize: icon-only buttons (no label to truncate), wrapped so they
-                reflow to fewer per row on a narrow screen instead of overflowing. */}
             {showTransform && (
-              <Card.Actions style={{ flexWrap: "wrap", gap: 6, paddingHorizontal: 8 }}>
-                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_X)}} style={{ minWidth: 44 }} compact>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 12, paddingTop: 10 }}>
+                <PanelIconButton onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_X)}}>
                   <View style={{transform: [{rotate: `${xAxisAngle}rad`}]}}>
                     <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
                   </View>
-                </Button>
-                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_X)}} style={{ minWidth: 44 }} compact>
+                </PanelIconButton>
+                <PanelIconButton onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_X)}}>
                   <View style={{transform: [{rotate: `${xAxisAngle + Math.PI}rad`}]}}>
                     <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
                   </View>
-                </Button>
-                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_Z)}} style={{ minWidth: 44 }} compact>
+                </PanelIconButton>
+                <PanelIconButton onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.POS_Z)}}>
                   <View style={{transform: [{rotate: `${xAxisAngle + Math.PI / 2}rad`}]}}>
                     <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
                   </View>
-                </Button>
-                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_Z)}} style={{ minWidth: 44 }} compact>
+                </PanelIconButton>
+                <PanelIconButton onPress={() => {rdr.house.translateSelectedFeature(0.25, MoveDirection.NEG_Z)}}>
                   <View style={{transform: [{rotate: `${xAxisAngle + 3 * Math.PI / 2}rad`}]}}>
                     <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF"/>
                   </View>
-                </Button>
-                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.rotateSelectedFeatureY(-15)}} style={{ minWidth: 44 }} compact>
+                </PanelIconButton>
+                <PanelIconButton onPress={() => {rdr.house.rotateSelectedFeatureY(-15)}}>
                   <MaterialCommunityIcons name="axis-z-rotate-clockwise" size={16} color="#FFFFFF"/>
-                </Button>
-                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.rotateSelectedFeatureY(15)}} style={{ minWidth: 44 }} compact>
+                </PanelIconButton>
+                <PanelIconButton onPress={() => {rdr.house.rotateSelectedFeatureY(15)}}>
                   <MaterialCommunityIcons name="axis-z-rotate-counterclockwise" size={16} color="#FFFFFF"/>
-                </Button>
-                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.scaleSelectedFeature(0.25)}} style={{ minWidth: 44 }} compact>
+                </PanelIconButton>
+                <PanelIconButton onPress={() => {rdr.house.scaleSelectedFeature(0.25)}}>
                   <MaterialCommunityIcons name="plus" size={16} color="#FFFFFF"/>
-                </Button>
-                <Button mode="contained" buttonColor={listBrand} onPress={() => {rdr.house.scaleSelectedFeature(-0.25)}} style={{ minWidth: 44 }} compact>
+                </PanelIconButton>
+                <PanelIconButton onPress={() => {rdr.house.scaleSelectedFeature(-0.25)}}>
                   <MaterialCommunityIcons name="minus" size={16} color="#FFFFFF"/>
-                </Button>
-              </Card.Actions>
+                </PanelIconButton>
+              </View>
             )}
 
-            {/* Actions: full labels, natural width, wrapped rather than forced into a grid */}
             {showActions && (
-              <Card.Actions style={{ flexWrap: "wrap", rowGap: 8, columnGap: 6, paddingHorizontal: 8 }}>
-                <Button
-                  mode="outlined"
-                  textColor={listBrand}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 12, paddingTop: 10 }}>
+                <ActionChip
+                  label="Set interval"
+                  icon="clock-outline"
                   onPress={() => {
                     setNewFrequency(String(selectedFeature.tasks[selectedChore].frequency_days));
                     setShowIntervalMenu(true);
                   }}
-                  icon="clock-outline"
-                >
-                  Set interval
-                </Button>
-                <Button
-                  mode="contained"
-                  buttonColor="#4caf50"
-                  textColor="#FFFFFF"
+                />
+                <ActionChip
+                  label="Mark complete"
+                  icon="check-circle"
+                  kind="success"
                   onPress={() => {
                     selectedFeature.tasks[selectedChore].finishTask();
                   }}
-                  icon="check-circle"
-                >
-                  Mark complete
-                </Button>
-                <Button
-                  mode="outlined"
-                  textColor={listBrand}
+                />
+                <ActionChip
+                  label="Send to dock"
+                  icon="tray-arrow-down"
                   onPress={() => {
                     rdr.removeFeature(selectedFeature.id);
                     setSelectedEditFeature(null);
                   }}
-                  icon="tray-arrow-down"
-                >
-                  Send to dock
-                </Button>
-                <Button
-                  mode="outlined"
-                  textColor="#D9534F"
+                />
+                <ActionChip
+                  label="Delete feature"
+                  icon="trash-can-outline"
+                  kind="danger"
                   onPress={() => {
                     setShowDeleteConfirm(true);
                   }}
-                  icon="trash-can-outline"
-                >
-                  Delete feature
-                </Button>
-              </Card.Actions>
+                />
+              </View>
             )}
 
             {/* Tasks: tap one to make it the target of the Actions above (interval/complete) */}
             {showTasks && selectedFeature.tasks.length > 0 && (
-              <Card.Actions style={{ flexDirection: "column", alignItems: "stretch", gap: 6, paddingHorizontal: 8, paddingBottom: 10 }}>
-                <Text style={{ fontSize: 11, color: "#8A94A3", marginBottom: 2 }}>
+              <View style={{ gap: 6, paddingHorizontal: 12, paddingTop: 10 }}>
+                <Text style={{ fontSize: 11, color: "#8A94A3" }}>
                   Tap a task to select it for Actions
                 </Text>
                 {selectedFeature.tasks.map((task, idx) => {
-                  const daysLeft = daysUntilNextDue(task);
+                  const due = getDueBadge(task);
                   const color = healthColor(healthPercent(task));
                   const isSelected = selectedChore === idx;
                   return (
@@ -716,7 +785,7 @@ function EditWindow(props: EditMenuProps) {
                         {
                           flexDirection: "row",
                           alignItems: "center",
-                          paddingVertical: 8,
+                          paddingVertical: 6,
                           paddingHorizontal: 10,
                           borderRadius: 8,
                           backgroundColor: isSelected ? listSelection : (Platform.OS === "web" && hovered ? "#F2F4F7" : "#FFFFFF"),
@@ -736,16 +805,18 @@ function EditWindow(props: EditMenuProps) {
                           Every {task.frequency_days} {task.frequency_days === 1 ? "day" : "days"}
                         </Text>
                       </View>
-                      <Text style={{ color, fontWeight: "700", fontSize: 13, marginLeft: 8 }}>
-                        {daysLeft} {daysLeft === 1 ? "day" : "days"}
-                      </Text>
+                      <View style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: due.backgroundColor }}>
+                        <Text style={{ color: due.color, fontWeight: "600", fontSize: 12 }}>
+                          {due.label}
+                        </Text>
+                      </View>
                       {isSelected && (
                         <MaterialCommunityIcons name="check-circle" size={16} color={listBrand} style={{ marginLeft: 8 }} />
                       )}
                     </Pressable>
                   );
                 })}
-              </Card.Actions>
+              </View>
             )}
           </Card>
         ) : isEditing && !selectedFeature ? (
