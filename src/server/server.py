@@ -17,12 +17,17 @@ Known faults: None
 """
 
 # Imports
-from flask import Flask
+import logging
+
+import psycopg2
+from flask import Flask, jsonify
 from db.auth.auth import auth_bp
 from db.connection import close_conn
 from db.household.household import household_bp
 from routes import routes_bp
 from flask_cors import CORS
+
+logging.basicConfig(level=logging.INFO)
 
 # Initialize Flask app and configure CORS
 app = Flask(__name__)
@@ -40,6 +45,12 @@ app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(routes_bp, url_prefix="/api")
 app.register_blueprint(household_bp, url_prefix="/household")
 app.teardown_appcontext(close_conn)
+
+
+@app.errorhandler(psycopg2.OperationalError)
+def handle_db_error(error):
+    app.logger.error("Database unavailable: %s", error)
+    return jsonify({"error": "Service temporarily unavailable — please try again shortly"}), 503
 
 # Main entry point to start the Flask server
 if __name__ == "__main__":
